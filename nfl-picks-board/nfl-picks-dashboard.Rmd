@@ -1,0 +1,559 @@
+---
+title: "NFL Picks Board"
+output:
+  html_document:
+    theme: null
+    highlight: null
+    toc: false
+runtime: shiny
+---
+
+<!--
+Run once:  install.packages(c("shiny", "rmarkdown", "jsonlite", "httr", "rvest", "xml2"))
+Then:      rmarkdown::run("nfl-picks-dashboard.Rmd")      (or "Run Document" in RStudio)
+
+Optional, for multi-sportsbook odds: get a free key at https://the-odds-api.com and set it before running:
+           Sys.setenv(ODDS_API_KEY = "your-key")          (or put ODDS_API_KEY=... in ~/.Renviron)
+
+Live sources, all keyed to the selected week
+  - NFL.com editors   https://www.nfl.com/news/nfl-picks-week-{WEEK}-{SEASON}-nfl-season  (picks + written analysis)
+  - CBS Sports        https://www.cbssports.com/nfl/picks/experts/straight-up/{WEEK}/     (7 experts)
+  - ESPN              scoreboard feed (schedule, lines, scores) + FPI win probabilities
+  - Sportsbooks       The Odds API (DraftKings, FanDuel, BetMGM, Caesars, etc.), averaged
+  - picks.csv         optional manual rows (e.g. ESPN's expert picks: columns espn_a, espn_h)
+ESPN's picks article can't be scraped: its URL contains a story ID that changes every week and the page
+is built with JavaScript. ESPN FPI is used instead, and you can type ESPN's picks into picks.csv.
+-->
+
+```{r setup, include=FALSE}
+library(shiny)
+library(jsonlite)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+season <- local({
+  y <- as.integer(format(Sys.Date(), "%Y"))
+  if (as.integer(format(Sys.Date(), "%m")) < 3) y - 1L else y
+})
+```
+
+```{css, echo=FALSE}
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&display=swap');
+:root{--bg:#0e1a24;--bg2:#13232f;--card:#ffffff;--ink:#14202b;--mute:#5d6b78;--line:#e1e7ec;--a:#1f8a5b;--b:#2f5fa8;--gold:#e0a526;--hit:#1f8a5b;--miss:#c4402f}
+*{box-sizing:border-box}
+body{background:linear-gradient(180deg,var(--bg) 0,var(--bg2) 260px,#eef2f5 260px);color:var(--ink);font-family:'Source Sans 3',system-ui,sans-serif;max-width:1040px;margin:0 auto;padding:0 18px 40px}
+h1.title{display:none}
+.hero{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:30px 0 20px;color:#fff}
+.hero h1{font:700 44px/1 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.5px;margin:0;color:#fff}
+.hero h1 span{color:var(--gold)}
+.hero p{margin:6px 0 0;color:#a9bac8;font-size:14px;max-width:560px}
+.gh{display:inline-flex;align-items:center;gap:8px;color:#fff;text-decoration:none;border:1px solid #3a5163;border-radius:999px;padding:8px 16px;font-weight:600;font-size:14px;background:#ffffff10}
+.gh:hover{background:#ffffff22;color:#fff;text-decoration:none}
+.gh svg{width:18px;height:18px;fill:#fff}
+h2{font:700 24px 'Barlow Condensed','Arial Narrow',sans-serif;margin:22px 0 8px;letter-spacing:.3px}
+.n{font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-weight:700}
+.well,.shiny-input-panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 12px;box-shadow:0 1px 3px #0d1a2410;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end}
+.shiny-input-container{margin:0!important;width:auto!important;min-width:150px}
+label.control-label{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute)}
+select,.form-control{border:1px solid #cdd6dd;border-radius:8px;padding:8px 10px;font-size:15px;background:#fff;color:var(--ink)}
+button,.btn{background:var(--ink);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}
+button:hover,.btn:hover{background:#2b4c7e}
+.irs--shiny .irs-bar,.irs--shiny .irs-handle{background:var(--b);border-color:var(--b)}
+.irs--shiny .irs-single{background:var(--b)}
+.panel-box{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:14px;box-shadow:0 4px 18px #0d1a2414}
+.big{display:flex;justify-content:space-between;align-items:flex-end}
+.big .n{font-size:64px;line-height:.9}.tag{font-size:13px;color:var(--mute)}
+.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line);margin:12px 0 6px}
+.bar i{display:block}.a{background:var(--a)}.b{background:var(--b)}
+.pick{display:inline-block;margin:10px 0 0;padding:6px 14px;border-radius:999px;background:#fff6dd;border:1px solid #f0d58a;font:700 22px 'Barlow Condensed','Arial Narrow',sans-serif;color:#7a5a05}
+.res{margin:14px 0;padding:10px 14px;border-radius:8px;border-left:4px solid var(--mute);background:#f3f6f8;font-weight:600}
+.hit{color:var(--hit);font-weight:700}.miss{color:var(--miss);font-weight:700}
+.sum{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 16px}
+.sum>div{flex:1;min-width:150px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 16px;color:var(--mute);font-size:13px;box-shadow:0 1px 3px #0d1a2410}
+.sum b{display:block;font:700 34px/1.05 'Barlow Condensed','Arial Narrow',sans-serif;color:var(--ink)}
+table{border-collapse:collapse;width:100%;background:#fff;border-radius:10px;overflow:hidden}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute);background:#f6f8fa}
+td,th{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:#f9fbfc}
+ul{padding-left:20px}li{margin:6px 0;line-height:1.45}
+.foot{margin-top:30px;padding-top:16px;border-top:1px solid #cfd8de;font-size:13px;color:var(--mute);display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
+.foot a,.tag a{color:var(--b)}
+@media(max-width:640px){.hero h1{font-size:34px}.big .n{font-size:46px}}
+```
+
+```{r hero}
+tags$div(class = "hero",
+  tags$div(tags$h1("NFL Picks ", tags$span("Board")),
+           tags$p("Expert picks, FPI and sportsbook odds averaged into one consensus pick for every game.")),
+  tags$a(class = "gh", href = "https://github.com/mrouin", target = "_blank",
+         HTML('<svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'),
+         "github.com/mrouin"))
+```
+
+```{r helpers}
+# ---- Teams ---------------------------------------------------------------------
+teams <- data.frame(
+  abbr = c("ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC",
+           "LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WSH"),
+  nick = c("Cardinals","Falcons","Ravens","Bills","Panthers","Bears","Bengals","Browns","Cowboys","Broncos",
+           "Lions","Packers","Texans","Colts","Jaguars","Chiefs","Chargers","Rams","Raiders","Dolphins",
+           "Vikings","Patriots","Saints","Giants","Jets","Eagles","Steelers","Seahawks","49ers","Buccaneers",
+           "Titans","Commanders"), stringsAsFactors = FALSE)
+alias <- c(JAC = "JAX", WAS = "WSH", AZ = "ARI", LA = "LAR", OAK = "LV", SD = "LAC", STL = "LAR")
+abbr2nick <- function(a) {
+  a <- toupper(a)
+  a <- ifelse(a %in% names(alias), unname(alias[a]), a)
+  teams$nick[match(a, teams$abbr)]
+}
+
+# ---- Standard columns ------------------------------------------------------------
+num_cols <- c("week","ml_a","ml_h","spread","total","nfl_a","nfl_h","cbs_a","cbs_h","espn_a","espn_h",
+              "score_a","score_h","fpi_a","book_a","book_n")
+chr_cols <- c("away","home","away_rec","home_rec","time","fav","why1","why2","why_nfl","books_txt","event_id")
+
+std <- function(d) {
+  n <- if (is.null(d)) 0 else nrow(d)
+  out <- data.frame(row.names = seq_len(n))
+  for (cn in num_cols) out[[cn]] <- if (n && cn %in% names(d)) suppressWarnings(as.numeric(d[[cn]])) else rep(NA_real_, n)
+  for (cn in chr_cols) out[[cn]] <- if (n && cn %in% names(d)) as.character(d[[cn]]) else rep(NA_character_, n)
+  out[, c("week", "away", "home", setdiff(c(num_cols, chr_cols), c("week", "away", "home")))]
+}
+add_key <- function(d) {
+  d$key <- ifelse(d$away < d$home, paste(d$away, d$home, sep = "|"), paste(d$home, d$away, sep = "|"))
+  d
+}
+fill <- function(x, y) ifelse(is.na(x), y, x)
+
+# Flip a/h columns for rows where a source lists the teams in the opposite order (neutral-site games)
+swap_rows <- function(s, rows) {
+  if (!any(rows)) return(s)
+  for (p in list(c("ml_a","ml_h"), c("nfl_a","nfl_h"), c("cbs_a","cbs_h"), c("espn_a","espn_h"),
+                 c("score_a","score_h"), c("away_rec","home_rec"))) {
+    t <- s[[p[1]]][rows]; s[[p[1]]][rows] <- s[[p[2]]][rows]; s[[p[2]]][rows] <- t
+  }
+  s$fav[rows] <- ifelse(s$fav[rows] == "a", "h", ifelse(s$fav[rows] == "h", "a", NA))
+  for (cn in c("fpi_a", "book_a")) s[[cn]][rows] <- 100 - s[[cn]][rows]
+  s
+}
+# Fill gaps in `base` from `src` (matched by team pair). Earlier sources take priority.
+combine <- function(base, src) {
+  if (is.null(src) || nrow(src) == 0) return(base)
+  src <- add_key(src)
+  src <- src[match(base$key, src$key), , drop = FALSE]
+  src <- swap_rows(src, !is.na(src$away) & src$away != base$away)
+  for (cn in setdiff(c(num_cols, chr_cols), c("week", "away", "home"))) base[[cn]] <- fill(base[[cn]], src[[cn]])
+  base
+}
+
+# ---- Small cache so changing games/sliders doesn't re-hit the websites ---------------
+cache <- new.env(); last <- new.env()
+cached <- function(key, ttl, fun) {
+  e <- cache[[key]]
+  if (!is.null(e) && as.numeric(difftime(Sys.time(), e$t, units = "secs")) < ttl) return(e$v)
+  v <- tryCatch(fun(), error = function(e) NULL)
+  cache[[key]] <- list(t = Sys.time(), v = v)
+  v
+}
+
+get_html <- function(url) {
+  r <- tryCatch(httr::GET(url, httr::user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"),
+                          httr::timeout(25)), error = function(e) NULL)
+  if (is.null(r) || httr::status_code(r) >= 400) return(NULL)
+  httr::content(r, as = "text", encoding = "UTF-8")
+}
+
+# ---- Source 1: manual picks.csv (optional) -----------------------------------------------
+read_picks <- function(w) {
+  if (!file.exists("picks.csv")) return(std(NULL))
+  d <- tryCatch(read.csv("picks.csv", stringsAsFactors = FALSE), error = function(e) NULL)
+  if (is.null(d)) return(std(NULL))
+  d <- std(d)
+  d[!is.na(d$week) & d$week == w, , drop = FALSE]
+}
+
+# ---- Source 2: ESPN scoreboard (schedule, lines, scores) --------------------------------------
+as_num <- function(v) {
+  if (is.null(v) || length(v) == 0) return(NA_real_)
+  v <- as.character(v[[1]])
+  if (toupper(v) == "EVEN") return(100)
+  suppressWarnings(as.numeric(v))
+}
+side_ml <- function(o, side) {
+  v <- tryCatch(o$moneyline[[side]]$close$odds, error = function(e) NULL)
+  if (is.null(v)) v <- tryCatch(o[[paste0(side, "TeamOdds")]]$moneyLine, error = function(e) NULL)
+  as_num(v)
+}
+parse_spread <- function(details, home_abbr, away_abbr) {
+  out <- list(fav = NA_character_, spread = NA_real_)
+  if (is.null(details) || length(details) == 0 || is.na(details)) return(out)
+  if (toupper(details) %in% c("EVEN", "PK", "PICK")) return(list(fav = "h", spread = 0))
+  m <- regmatches(details, regexec("^(\\S+)\\s+([-+]?[0-9.]+)$", details))[[1]]
+  if (length(m) == 3) {
+    out$spread <- abs(as.numeric(m[3]))
+    out$fav <- if (m[2] == home_abbr) "h" else if (m[2] == away_abbr) "a" else NA_character_
+  }
+  out
+}
+fetch_espn_week <- function(week, year) {
+  url <- sprintf("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=%d&dates=%d", week, year)
+  j <- tryCatch(fromJSON(url, simplifyVector = FALSE), error = function(e) NULL)
+  if (is.null(j) || length(j$events) == 0) return(NULL)
+  rows <- lapply(j$events, function(ev) {
+    comp <- ev$competitions[[1]]; cs <- comp$competitors
+    home <- Filter(function(x) x$homeAway == "home", cs)[[1]]
+    away <- Filter(function(x) x$homeAway == "away", cs)[[1]]
+    rec <- function(x) if (length(x$records)) x$records[[1]]$summary else NA_character_
+    done <- isTRUE(ev$status$type$completed)
+    o <- if (length(comp$odds)) comp$odds[[1]] else list()
+    sp <- parse_spread(o$details, home$team$abbreviation, away$team$abbreviation)
+    t <- as.POSIXct(ev$date, format = "%Y-%m-%dT%H:%MZ", tz = "UTC"); attr(t, "tzone") <- ""
+    data.frame(week = week, away = away$team$shortDisplayName, home = home$team$shortDisplayName,
+               away_rec = rec(away), home_rec = rec(home), time = format(t, "%a %I:%M %p"),
+               ml_a = side_ml(o, "away"), ml_h = side_ml(o, "home"), fav = sp$fav, spread = sp$spread,
+               total = if (is.null(o$overUnder)) NA_real_ else as.numeric(o$overUnder),
+               score_a = if (done) as.numeric(away$score) else NA_real_,
+               score_h = if (done) as.numeric(home$score) else NA_real_,
+               event_id = as.character(ev$id), stringsAsFactors = FALSE)
+  })
+  std(do.call(rbind, rows))
+}
+current_week <- function() {
+  w <- tryCatch(fromJSON("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+                         simplifyVector = FALSE)$week$number, error = function(e) NULL)
+  w <- suppressWarnings(as.integer(w))
+  if (length(w) != 1 || is.na(w)) 1L else min(max(w, 1L), 18L)
+}
+
+# ---- Source 3: ESPN FPI win probability --------------------------------------------------------
+fetch_fpi <- function(ids) {
+  vapply(ids, function(id) {
+    if (is.na(id)) return(NA_real_)
+    url <- sprintf("https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/events/%s/competitions/%s/predictor", id, id)
+    j <- tryCatch(fromJSON(url, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.null(j)) return(NA_real_)
+    h <- NA_real_
+    for (s in j$homeTeam$statistics) if (identical(s$name, "gameProjection")) h <- suppressWarnings(as.numeric(s$value))
+    if (is.na(h)) NA_real_ else 100 - h          # FPI reports the home team's win probability
+  }, numeric(1), USE.NAMES = FALSE)
+}
+
+# ---- Source 4: NFL.com editors' picks + analysis ----------------------------------------------
+parse_nfl_chunk <- function(ch) {
+  flat <- gsub("\\s+", " ", ch)
+  head <- substr(flat, 1, 400)
+  m <- regmatches(head, regexec("^\\s*(.+?)\\s+([+-][0-9]+)\\s*\\|\\s*(.+?)\\s+([+-][0-9]+)", head, perl = TRUE))[[1]]
+  if (length(m) < 5) return(NULL)
+  s <- regmatches(head, regexec("SPREAD:\\s*(.+?)\\s+([+-]?[0-9.]+)\\s*\\|\\s*O/U:?\\s*([0-9.]+)", head, perl = TRUE))[[1]]
+  toks <- regmatches(flat, gregexpr("\\[\\[PICK:[A-Z]+\\]\\]", flat))[[1]]
+  nick <- abbr2nick(gsub("\\[\\[PICK:|\\]\\]", "", toks))
+  wm <- regmatches(flat, regexec("Why ([A-Za-z]+) picked the ([^:]+):\\s*(.+)$", flat, perl = TRUE))[[1]]
+  why <- NA_character_
+  if (length(wm) == 4) {
+    sents <- strsplit(wm[4], "(?<=[.!?])\\s+", perl = TRUE)[[1]]
+    txt <- paste(head(sents, 2), collapse = " ")
+    if (nchar(txt) > 330) txt <- paste0(substr(txt, 1, 327), "...")
+    why <- sprintf("NFL.com's %s on the %s: %s", wm[2], wm[3], txt)
+  }
+  data.frame(away = m[2], home = m[4], ml_a = as.numeric(m[3]), ml_h = as.numeric(m[5]),
+             fav = if (length(s) == 4) (if (s[2] == m[2]) "a" else "h") else NA_character_,
+             spread = if (length(s) == 4) abs(as.numeric(s[3])) else NA_real_,
+             total = if (length(s) == 4) as.numeric(s[4]) else NA_real_,
+             nfl_a = sum(nick == m[2], na.rm = TRUE), nfl_h = sum(nick == m[4], na.rm = TRUE),
+             why_nfl = why, stringsAsFactors = FALSE)
+}
+scrape_nfl <- function(week, year) {
+  html <- get_html(sprintf("https://www.nfl.com/news/nfl-picks-week-%d-%d-nfl-season", week, year))
+  if (is.null(html)) return(NULL)
+  html <- gsub("(?s)<script.*?</script>|<style.*?</style>", " ", html, perl = TRUE)
+  html <- gsub("<img[^>]*outlines/([A-Z]{2,3})[^>]*>", " [[PICK:\\1]] ", html, perl = TRUE)  # each pick shows the picked team's outline
+  txt <- rvest::html_text2(rvest::html_element(rvest::read_html(html), "body"))
+  parts <- strsplit(txt, "MONEYLINE:", fixed = TRUE)[[1]]
+  if (length(parts) < 2) return(NULL)
+  rows <- Filter(Negate(is.null), lapply(parts[-1], parse_nfl_chunk))
+  if (!length(rows)) return(NULL)
+  d <- do.call(rbind, rows)
+  d$nfl_a[d$nfl_a + d$nfl_h == 0] <- NA; d$nfl_h[is.na(d$nfl_a)] <- NA   # no picks posted yet
+  std(d)
+}
+
+# ---- Source 5: CBS Sports expert picks (table rows carry the game and each expert's pick) -----
+scrape_cbs <- function(week) {
+  html <- get_html(sprintf("https://www.cbssports.com/nfl/picks/experts/straight-up/%d/", week))
+  if (is.null(html)) return(NULL)
+  doc <- xml2::read_html(html)
+  rows <- lapply(xml2::xml_find_all(doc, "//tr"), function(tr) {
+    tds <- xml2::xml_find_all(tr, "./td")
+    if (length(tds) < 2) return(NULL)
+    first <- as.character(tds[[1]])
+    m <- regmatches(first, regexec("NFL_[0-9]{8}_([A-Z]+)@([A-Z]+)", first))[[1]]
+    if (length(m) < 3) return(NULL)
+    away <- abbr2nick(m[2]); home <- abbr2nick(m[3])
+    picks <- vapply(seq_along(tds)[-1], function(i) {
+      h <- as.character(tds[[i]])
+      a <- regmatches(h, regexec("/nfl/teams/([A-Z]+)/", h))[[1]]
+      if (length(a) == 2) abbr2nick(a[2]) else NA_character_
+    }, character(1))
+    ca <- sum(picks == away, na.rm = TRUE); ch <- sum(picks == home, na.rm = TRUE)
+    data.frame(away = away, home = home, cbs_a = if (ca + ch) ca else NA_real_,
+               cbs_h = if (ca + ch) ch else NA_real_, stringsAsFactors = FALSE)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (!length(rows)) return(NULL)
+  std(do.call(rbind, rows))
+}
+
+# ---- Source 6: sportsbooks via The Odds API (needs ODDS_API_KEY) --------------------------------
+implied <- function(ml) ifelse(ml < 0, -ml / (-ml + 100), 100 / (ml + 100))
+fetch_books <- function() {
+  key <- Sys.getenv("ODDS_API_KEY")
+  if (!nzchar(key)) return(NULL)
+  url <- sprintf("https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/?apiKey=%s&regions=us&markets=h2h&oddsFormat=american", key)
+  j <- fromJSON(url, simplifyVector = FALSE)
+  rows <- lapply(j, function(ev) {
+    ps <- lapply(ev$bookmakers, function(b) {
+      mk <- Filter(function(m) m$key == "h2h", b$markets)
+      if (!length(mk)) return(NULL)
+      o <- mk[[1]]$outcomes
+      pa <- Filter(function(x) x$name == ev$away_team, o); ph <- Filter(function(x) x$name == ev$home_team, o)
+      if (!length(pa) || !length(ph)) return(NULL)
+      ia <- implied(pa[[1]]$price); ih <- implied(ph[[1]]$price)
+      list(p = ia / (ia + ih) * 100, title = b$title)        # margin removed per book
+    })
+    ps <- Filter(Negate(is.null), ps)
+    if (!length(ps)) return(NULL)
+    p <- vapply(ps, function(x) x$p, numeric(1)); ti <- vapply(ps, function(x) x$title, character(1))
+    data.frame(away = sub(".* ", "", ev$away_team), home = sub(".* ", "", ev$home_team),
+               book_a = mean(p), book_n = length(p),
+               books_txt = paste(sprintf("%s %.0f%%", ti, p), collapse = ", "), stringsAsFactors = FALSE)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (!length(rows)) return(NULL)
+  std(do.call(rbind, rows))
+}
+
+# ---- Consensus -------------------------------------------------------------------------------
+fmt_ml <- function(x) ifelse(is.na(x), "-", ifelse(x > 0, paste0("+", x), as.character(x)))
+n0 <- function(x) ifelse(is.na(x), 0, x)
+
+calc <- function(d, w) {
+  if (nrow(d) == 0) return(d)
+  has_ml <- !is.na(d$ml_a) & !is.na(d$ml_h)
+  ia <- implied(d$ml_a); ih <- implied(d$ml_h)
+  p_ml <- ia / (ia + ih) * 100
+  pf <- pnorm(d$spread / 13.5) * 100                                  # fallback: spread -> favorite win chance
+  p_sp <- ifelse(is.na(d$fav), NA_real_, ifelse(d$fav == "a", pf, 100 - pf))
+  d$p_mkt <- ifelse(!is.na(d$book_a), d$book_a, ifelse(has_ml, p_ml, p_sp))
+  d$mkt_src <- ifelse(!is.na(d$book_a), paste0("average of ", d$book_n, " sportsbooks"),
+                      ifelse(has_ml, "moneyline", ifelse(is.na(p_sp), "none", "point spread")))
+  # Expert picks become a probability with a small prior so 5-0 isn't treated as 100%
+  share <- function(a, h) ifelse(is.na(a) & is.na(h), NA_real_, (n0(a) + 1) / (n0(a) + n0(h) + 2) * 100)
+  d$p_nfl <- share(d$nfl_a, d$nfl_h); d$p_cbs <- share(d$cbs_a, d$cbs_h); d$p_espn <- share(d$espn_a, d$espn_h)
+  P <- cbind(nfl = d$p_nfl, cbs = d$p_cbs, espn = d$p_espn, fpi = d$fpi_a, mkt = d$p_mkt)
+  W <- matrix(w[colnames(P)], nrow = nrow(P), ncol = ncol(P), byrow = TRUE)
+  ok <- !is.na(P)
+  num <- rowSums(ifelse(ok, P * W, 0)); den <- rowSums(ifelse(ok, W, 0))
+  d$p_away <- ifelse(den > 0, num / den, 50)
+  d$p_home <- 100 - d$p_away
+  d$n_src <- rowSums(ok & W > 0)
+  d$has_votes <- !(is.na(d$nfl_a) & is.na(d$nfl_h) & is.na(d$cbs_a) & is.na(d$cbs_h) & is.na(d$espn_a) & is.na(d$espn_h))
+  d$votes_a <- ifelse(d$has_votes, rowSums(cbind(d$nfl_a, d$cbs_a, d$espn_a), na.rm = TRUE), NA)
+  d$votes_h <- ifelse(d$has_votes, rowSums(cbind(d$nfl_h, d$cbs_h, d$espn_h), na.rm = TRUE), NA)
+  d$final   <- !is.na(d$score_a) & !is.na(d$score_h)
+  d$winner  <- ifelse(!d$final, NA, ifelse(d$score_a > d$score_h, "a", "h"))
+  d$cons_fav <- ifelse(d$n_src == 0 | d$p_away == 50, NA, ifelse(d$p_away > 50, "a", "h"))
+  d$mkt_fav  <- ifelse(is.na(d$p_mkt) | d$p_mkt == 50, NA, ifelse(d$p_mkt > 50, "a", "h"))
+  d$exp_fav  <- ifelse(!d$has_votes | d$votes_a == d$votes_h, NA, ifelse(d$votes_a > d$votes_h, "a", "h"))
+  d$pick  <- ifelse(is.na(d$cons_fav), "Toss-up", ifelse(d$cons_fav == "a", d$away, d$home))
+  d$label <- paste(d$away, "at", d$home)
+  d
+}
+sp_txt <- function(r, side) {
+  if (is.na(r$spread) || is.na(r$fav)) return("-")
+  if (r$fav == side) paste0("-", r$spread) else paste0("+", r$spread)
+}
+```
+
+Consensus pick = weighted average of every source's win probability for each team. Expert picks from NFL.com,
+CBS Sports and ESPN are converted to a probability from their vote split, then averaged with ESPN FPI and the
+sportsbook line. Use the sliders to change how much each source counts (0 turns a source off). For information only,
+not betting advice.
+
+```{r controls}
+auto_timer <- reactiveTimer(10 * 60 * 1000)
+
+wk <- reactive({
+  input$refresh
+  if (isTRUE(input$auto)) auto_timer()
+  w <- as.integer(input$week); req(w)
+  if (!identical(input$refresh, last$refresh)) { rm(list = ls(cache), envir = cache); last$refresh <- input$refresh }
+
+  espn  <- cached(paste("espn", w), 120, function() fetch_espn_week(w, season))
+  nfl   <- cached(paste("nfl", w), 600, function() scrape_nfl(w, season))
+  cbs   <- cached(paste("cbs", w), 600, function() scrape_cbs(w))
+  books <- cached("books", 300, fetch_books)
+  cur   <- read_picks(w)
+
+  base <- NULL
+  for (s in list(espn, nfl, cbs, cur)) if (is.null(base) && !is.null(s) && nrow(s) > 0) base <- s
+  stat <- function(x) if (is.null(x) || nrow(x) == 0) "not available" else paste(nrow(x), "games")
+  fp <- NULL
+  if (!is.null(base)) {
+    base <- add_key(base); base$week <- w
+    fp <- cached(paste("fpi", w), 600, function() fetch_fpi(base$event_id))
+    for (s in list(nfl, cbs, books, cur)) base <- combine(base, s)
+    if (!is.null(fp) && length(fp) == nrow(base)) base$fpi_a <- fill(base$fpi_a, fp)
+  }
+  st <- data.frame(
+    Source = c("ESPN scoreboard (schedule, lines, scores)", "NFL.com editors + analysis", "CBS Sports experts",
+               "ESPN FPI win probability", "Sportsbooks (The Odds API)", "picks.csv (manual)"),
+    Status = c(stat(espn), stat(nfl), stat(cbs),
+               if (!is.null(fp) && any(!is.na(fp))) paste(sum(!is.na(fp)), "games") else "not available",
+               if (!nzchar(Sys.getenv("ODDS_API_KEY"))) "no ODDS_API_KEY set" else stat(books), stat(cur)))
+  wt <- function(x) if (is.null(x)) 1 else x
+  weights <- c(nfl = wt(input$w_nfl), cbs = wt(input$w_cbs), espn = wt(input$w_espn),
+               fpi = wt(input$w_fpi), mkt = wt(input$w_mkt))
+  d <- if (is.null(base)) std(NULL) else calc(base, weights)
+  attr(d, "status") <- st
+  d
+})
+
+inputPanel(
+  selectInput("week", "Week", choices = 1:18, selected = current_week()),
+  actionButton("refresh", "Refresh data"),
+  checkboxInput("auto", "Auto-refresh every 10 min", FALSE),
+  renderUI({
+    d <- wk()
+    if (nrow(d) == 0) return(helpText("No games found for this week."))
+    selectInput("game", "Game", choices = setNames(seq_len(nrow(d)), d$label))
+  })
+)
+inputPanel(
+  sliderInput("w_nfl", "NFL.com weight", 0, 3, 1, step = 0.5),
+  sliderInput("w_cbs", "CBS Sports weight", 0, 3, 1, step = 0.5),
+  sliderInput("w_espn", "ESPN picks weight", 0, 3, 1, step = 0.5),
+  sliderInput("w_fpi", "ESPN FPI weight", 0, 3, 1, step = 0.5),
+  sliderInput("w_mkt", "Sportsbooks weight", 0, 3, 1, step = 0.5)
+)
+```
+
+```{r summary}
+renderUI({
+  d <- wk()
+  if (nrow(d) == 0)
+    return(div(class = "panel-box", "No schedule or picks could be loaded for this week. Check your connection, then click Refresh data."))
+  rec <- function(col) {
+    ok <- d$final & !is.na(d[[col]])
+    if (!any(ok)) return("-")
+    paste0(sum(d[[col]][ok] == d$winner[ok]), "-", sum(d[[col]][ok] != d$winner[ok]))
+  }
+  div(class = "sum",
+      div(tags$b(nrow(d)), "games"),
+      div(tags$b(rec("cons_fav")), "consensus pick (final games)"),
+      div(tags$b(rec("mkt_fav")), "sportsbook favorite"),
+      div(tags$b(rec("exp_fav")), "expert majority"))
+})
+```
+
+```{r detail}
+renderUI({
+  d <- wk(); req(nrow(d) > 0, input$game)
+  idx <- as.integer(input$game); req(idx >= 1, idx <= nrow(d))
+  r <- d[idx, ]
+  lead_p <- max(r$p_away, r$p_home)
+
+  # Per-source breakdown
+  src <- list(
+    list("NFL.com editors", sprintf("%s-%s picks", n0(r$nfl_a), n0(r$nfl_h)), r$p_nfl),
+    list("CBS Sports experts", sprintf("%s-%s picks", n0(r$cbs_a), n0(r$cbs_h)), r$p_cbs),
+    list("ESPN picks (picks.csv)", sprintf("%s-%s picks", n0(r$espn_a), n0(r$espn_h)), r$p_espn),
+    list("ESPN FPI", "win probability", r$fpi_a),
+    list("Sportsbooks", r$mkt_src, r$p_mkt))
+  src <- Filter(function(x) !is.na(x[[3]]), src)
+  pa <- vapply(src, function(x) x[[3]], numeric(1))
+  agree <- if (is.na(r$cons_fav)) NA else if (r$cons_fav == "a") sum(pa > 50) else sum(pa < 50)
+
+  result <- if (r$final) {
+    w <- if (r$winner == "a") r$away else r$home
+    chk <- function(f, lab) if (is.na(f)) NULL else
+      tagList(sprintf(" %s ", lab), span(class = if (f == r$winner) "hit" else "miss", if (f == r$winner) "right" else "wrong"), ".")
+    div(class = "res", sprintf("Final: %s %d, %s %d. %s won.", r$away, r$score_a, r$home, r$score_h, w),
+        chk(r$cons_fav, "Consensus pick was"), chk(r$mkt_fav, "Sportsbook favorite was"), chk(r$exp_fav, "Expert majority was"))
+  } else div(class = "res", paste(if (is.na(r$time)) "Upcoming" else r$time, "- not final"))
+
+  # Reasons: live NFL.com analysis and any manual notes; otherwise computed from the data
+  bullets <- c(r$why_nfl, r$why1, r$why2)
+  bullets <- bullets[!is.na(bullets)]
+  if (!is.na(r$away_rec) && !is.na(r$home_rec))
+    bullets <- c(bullets, sprintf("Records: %s %s, %s %s.", r$away, r$away_rec, r$home, r$home_rec))
+  if (!is.na(r$spread) && !is.na(r$total) && !is.na(r$fav)) {
+    fav_n <- if (r$fav == "a") r$away else r$home; dog_n <- if (r$fav == "a") r$home else r$away
+    bullets <- c(bullets, sprintf("Spread %s -%.1f with a %.1f total implies about %s %.1f, %s %.1f.",
+                                  fav_n, r$spread, r$total, fav_n, (r$total + r$spread) / 2, dog_n, (r$total - r$spread) / 2))
+  }
+  if (!is.na(agree)) bullets <- c(sprintf("%d of %d sources lean %s.", agree, length(src), r$pick), bullets)
+  if (length(bullets) == 0) bullets <- "No analysis available yet for this game."
+
+  div(class = "panel-box",
+    div(class = "big",
+      div(div(class = "n", style = "color:#1f6b4a", sprintf("%.1f%%", r$p_away)),
+          div(class = "tag", paste0(r$away, if (is.na(r$away_rec)) "" else paste0(" (", r$away_rec, ")")))),
+      div(style = "text-align:right",
+          div(class = "n", style = "color:#2b4c7e", sprintf("%.1f%%", r$p_home)),
+          div(class = "tag", paste0(r$home, if (is.na(r$home_rec)) "" else paste0(" (", r$home_rec, ")"))))),
+    div(class = "bar", tags$i(class = "a", style = sprintf("width:%f%%", r$p_away)),
+                       tags$i(class = "b", style = sprintf("width:%f%%", r$p_home))),
+    div(class = "pick", if (is.na(r$cons_fav)) "Consensus: toss-up (not enough data yet)"
+                        else sprintf("Consensus pick: %s (%.0f%%)", r$pick, lead_p)),
+    result,
+    h2("Why"), tags$ul(lapply(bullets, tags$li)),
+    h2("Source breakdown"),
+    if (length(src) == 0) div(class = "tag", "No sources have data for this game yet.") else
+      tags$table(
+        tags$tr(tags$th("Source"), tags$th("Detail"), tags$th(r$away), tags$th(r$home), tags$th("Leans")),
+        lapply(src, function(x) tags$tr(tags$td(x[[1]]), tags$td(x[[2]]), tags$td(sprintf("%.0f%%", x[[3]])),
+                                        tags$td(sprintf("%.0f%%", 100 - x[[3]])),
+                                        tags$td(if (x[[3]] > 50) r$away else if (x[[3]] < 50) r$home else "even")))),
+    h2("Lines"),
+    tags$table(
+      tags$tr(tags$th(""), tags$th("Moneyline"), tags$th("Spread")),
+      tags$tr(tags$td(r$away), tags$td(fmt_ml(r$ml_a)), tags$td(sp_txt(r, "a"))),
+      tags$tr(tags$td(r$home), tags$td(fmt_ml(r$ml_h)), tags$td(sp_txt(r, "h")))),
+    div(class = "tag", if (is.na(r$total)) "Total: -" else sprintf("Total %.1f.", r$total),
+        if (!is.na(r$books_txt)) paste0(" Sportsbook win chance for ", r$away, ": ", r$books_txt, ".")))
+})
+```
+
+## Full slate
+
+```{r slate}
+renderTable({
+  d <- wk(); req(nrow(d) > 0)
+  data.frame(Game = d$label, Time = ifelse(is.na(d$time), "", d$time),
+             `Consensus pick` = d$pick,
+             `Pick %` = round(pmax(d$p_away, d$p_home), 0),
+             `Book %` = ifelse(is.na(d$p_mkt) | is.na(d$cons_fav), "-",
+                               as.character(round(ifelse(d$cons_fav == "h", 100 - d$p_mkt, d$p_mkt), 0))),
+             Sources = d$n_src,
+             Final = ifelse(d$final, paste0(d$score_a, "-", d$score_h), ""),
+             check.names = FALSE)
+}, striped = TRUE)
+```
+
+## Source status
+
+```{r status}
+renderTable({ wk(); attr(wk(), "status") }, striped = TRUE)
+renderUI({
+  w <- as.integer(input$week); req(w)
+  tags$p(class = "tag", "Open the sources: ",
+         tags$a(href = sprintf("https://www.nfl.com/news/nfl-picks-week-%d-%d-nfl-season", w, season), "NFL.com"), " · ",
+         tags$a(href = sprintf("https://www.cbssports.com/nfl/picks/experts/straight-up/%d/", w), "CBS Sports"), " · ",
+         tags$a(href = sprintf("https://www.espn.com/nfl/picks/_/week/%d/seasontype/2", w), "ESPN picks"))
+})
+```
+
+```{r footer}
+tags$div(class = "foot",
+  tags$span("For information only, not betting advice."),
+  tags$span("Source code: ", tags$a(href = "https://github.com/mrouin", target = "_blank", "github.com/mrouin")))
+```
