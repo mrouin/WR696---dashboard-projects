@@ -1,0 +1,309 @@
+---
+title: "Site-specific K600 priors from gauge flow, channel slope and hydraulic geometry"
+author: "Maggie Rouin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 11, fig.height = 7)
+```
+
+# What this does
+
+For every sonde site it builds a **flow-informed K600 prior** for
+`streammetabolizer_updated.Rmd`, using published reach-scale equations:
+
+1. **Flow**: daily discharge from USGS and Colorado DWR gauges (direct gauge where
+   `flow_source` names one, otherwise a documented proxy; see `site_gauge_map.csv`).
+2. **Slope and drainage area** from the site's lat/long, snapped to the NHDPlusV2
+   flowline (`nhdplusTools`). You can override with a surveyed/LiDAR slope in
+   `site_metadata.csv` (column `slope`).
+3. **Velocity and depth** from discharge via a hydraulic geometry fitted to USGS field
+   measurements at the nearby gauges (at-a-station power laws, V = a Q^b, D = c Q^f).
+4. **k600** (m/d) from Raymond et al. (2012) Eq. 4, `k600 = 5037 (V S)^0.89 D^0.54`
+   (also the model used to set priors for the NEON reaeration dataset, Aho et al. 2024),
+   with Eq. 7 `4725 (V S)^0.86 Q^-0.14 D^0.66` as a sensitivity check.
+   Both are in m/d with V in m/s, Q in m3/s, D in m.
+5. **K600** (1/d) = k600 / depth. The site prior is the median of daily K600 over the
+   days a sonde was deployed; the prior width is the day-to-day spread driven by flow.
+
+Why a prior and not a "measured" K600: K600 is not identifiable from DO alone
+(equifinality with ER; Appling et al. 2018). Priors from hydraulics are the
+accepted way to constrain it when no tracer data exist (Hall & Ulseth 2020 review).
+
+**Check before trusting numbers.** Steep reaches (energy dissipation above a threshold)
+shift into a bubble-mediated regime where lowland-based equations can underestimate k600
+by a large factor (Ulseth et al. 2019). The script flags those site-days (`eD`),
+which matters for the upper Poudre sites (chd, pfal, pbr, sfm, joei, cbri, penn, lbea).
+
+```{r libs}
+library(tidyverse)
+```
+
+```{r install, eval=FALSE}
+install.packages(c("dataRetrieval", "nhdplusTools", "sf", "cdssr"))
+# cdssr: remotes::install_github("anguswg-ucsb/cdssr")
+# USGS API token (optional, avoids rate limits): put API_USGS_PAT in ~/.Renviron
+```
+
+# 1. Settings
+
+```{r config}
+DATA_DIR   <- "project/data"
+META_FILE  <- file.path(DATA_DIR, "site_metadata.csv")
+GAUGE_FILE <- file.path(DATA_DIR, "site_gauge_map.csv")
+FLOW_DIR   <- file.path(DATA_DIR, "flow_manual")      # for Larimer County sites
+OUT_DIR    <- "dashboard_data"; dir.create(OUT_DIR, showWarnings = FALSE)
+START <- "2019-01-01"; END <- "2025-12-31"
+CFS_TO_CMS <- 0.0283168
+G <- 9.81
+ED_HIGH <- 0.02            # m2 s-3; high-energy flag. CONFIRM the threshold in Ulseth et al. 2019
+MIN_SDLOG <- 0.15          # floor on prior width (log scale)
+K600_FALLBACK <- 30; SDLOG_FALLBACK <- 0.7   # ungauged / failed sites (wide prior)
+HG_MIN_MEAS <- 8           # min field measurements to fit site hydraulic geometry
+EXCLUDE_SITES <- c("pman", "penn", "lbea")   # dropped from the K600 calculations
+```
+
+# 2. Sites, gauges, slope and drainage area
+
+```{r sites}
+site_meta_all <- read_csv(META_FILE, show_col_types = FALSE)          # full file, rewritten untouched at the end
+site_meta <- site_meta_all |> filter(!site %in% EXCLUDE_SITES)
+gauges    <- read_csv(GAUGE_FILE, show_col_types = FALSE) |> filter(!site %in% EXCLUDE_SITES)
+sites <- site_meta |> left_join(gauges, by = "site") |> filter(!is.na(lat), !is.na(lon))
+
+# snap each sonde to its NHDPlusV2 flowline, then pull slope and drainage area
+# the attribute table is downloaded once (and cached) rather than once per site
+vaa <- nhdplusTools::get_vaa(c("slope", "totdasqkm", "lengthkm")) |> mutate(comid = as.numeric(comid))
+
+get_reach <- function(lat, lon) {
+  pt <- sf::st_sfc(sf::st_point(c(lon, lat)), crs = 4326)
+  id <- as.numeric(nhdplusTools::discover_nhdplus_id(pt))
+  if (length(id) != 1 || is.na(id)) stop("no NHDPlus flowline found at this point")
+  out <- vaa |> filter(comid == id)
+  if (!nrow(out)) stop("comid ", id, " is not in the VAA table")
+  tibble(comid = id, nhd_slope = out$slope[1], da_km2 = out$totdasqkm[1], reach_km = out$lengthkm[1])
+}
+
+# run get_reach(sites$lat[1], sites$lon[1]) by hand first if this comes back empty: the error will print
+reach <- pmap(list(sites$site, sites$lat, sites$lon), \(s, la, lo)
+              tryCatch(get_reach(la, lo) |> mutate(site = s),
+                       error = \(e) { message(s, ": ", conditionMessage(e)); NULL })) |>
+  bind_rows()
+stopifnot("No reaches found: see the messages above" = nrow(reach) > 0)
+
+sites <- sites |> left_join(reach, by = "site") |>
+  mutate(slope = coalesce(if ("slope" %in% names(sites)) slope else NA_real_, na_if(nhd_slope, -9998)))
+sites |> select(site, comid, slope, da_km2, reach_km)
+```
+
+NHDPlusV2 slope is a coarse reach average; very short reaches or reservoirs give unreliable
+values. Replace with a surveyed or LiDAR-derived slope (add a `slope` column to
+`site_metadata.csv`) for any site where this table looks wrong.
+
+# 3. Gauge flow (USGS + Colorado DWR + manual)
+
+```{r flow}
+usgs_ids <- gauges |> filter(source == "usgs") |> pull(gauge_id) |> unique()
+dwr_ids  <- gauges |> filter(source == "dwr")  |> pull(gauge_id) |> unique()
+
+# USGS: new Water Data API (read_waterdata_daily replaces readNWISdv)
+flow_usgs <- dataRetrieval::read_waterdata_daily(
+  monitoring_location_id = usgs_ids, parameter_code = "00060", statistic_id = "00003",
+  time = paste0(START, "/", END)) |>
+  sf::st_drop_geometry() |> as_tibble() |>
+  transmute(gauge_id = monitoring_location_id, date = as.Date(time), q_cfs = as.numeric(value),
+            flow_estimated = qualifier != "", approval_status)   # unit_of_measure is ft^3/s
+
+# Colorado DWR telemetry stations via CDSS REST
+flow_dwr <- map(dwr_ids, \(id) cdssr::get_telemetry_ts(abbrev = id, parameter = "DISCHRG",
+                  start_date = START, end_date = END, timescale = "day") |>
+                  as_tibble() |> mutate(gauge_id = id)) |> bind_rows()
+# the date/value column names differ between package versions: inspect names(flow_dwr)
+flow_dwr <- flow_dwr |> transmute(gauge_id, date = as.Date(coalesce(!!!syms(intersect(c("meas_date", "measDate"), names(flow_dwr))))),
+                                  q_cfs = as.numeric(coalesce(!!!syms(intersect(c("meas_value", "measValue", "value"), names(flow_dwr))))))
+
+# Larimer County ALERT sites: one csv per gauge with columns date,q_cfs
+flow_man <- list.files(FLOW_DIR, pattern = "\\.csv$", full.names = TRUE) |>
+  map(\(f) read_csv(f, show_col_types = FALSE) |> mutate(gauge_id = tools::file_path_sans_ext(basename(f)), date = as.Date(date))) |>
+  bind_rows()
+
+flow_gauge <- bind_rows(flow_usgs, flow_dwr, flow_man) |>
+  filter(!is.na(q_cfs)) |> mutate(q_cms = q_cfs * CFS_TO_CMS)
+
+flow_gauge |> group_by(gauge_id) |>
+  summarise(first = min(date), last = max(date), days = n(),
+            q_min = min(q_cms), q_median = median(q_cms), q_max = max(q_cms))
+```
+
+Each gauge's record is plotted below so gaps and flow regimes are visible before anything is
+computed from them.
+
+```{r flow-plot}
+ggplot(flow_gauge, aes(date, q_cms)) +
+  geom_line(linewidth = 0.3, colour = "#33415C") +
+  scale_y_log10() + facet_wrap(~ gauge_id, ncol = 2, scales = "free_y") +
+  labs(title = "Daily mean discharge at the reference gauges", x = NULL, y = expression(Q~(m^3~s^{-1}))) +
+  theme_minimal()
+```
+
+# 4. Site discharge
+
+Direct gauges are used as is. For proxies, flow is optionally scaled by the drainage-area ratio
+(`area_scale = TRUE`). This ignores diversions, canals and reservoir releases, which are
+large on the Poudre, so proxy-based K600 values carry the lowest confidence.
+
+```{r site-q}
+gauge_da <- gauges |> filter(relation == "direct") |> select(gauge_id, site) |>
+  left_join(sites |> select(site, da_gauge = da_km2), by = "site") |> distinct(gauge_id, .keep_all = TRUE) |> select(-site)
+
+site_q <- sites |> filter(source != "none") |>
+  select(site, gauge_id, relation, area_scale, da_km2) |>
+  left_join(gauge_da, by = "gauge_id") |>
+  mutate(scale = if_else(area_scale & !is.na(da_km2) & !is.na(da_gauge), da_km2 / da_gauge, 1)) |>
+  left_join(flow_gauge, by = "gauge_id", relationship = "many-to-many") |>
+  transmute(site, date, relation, q_cms = q_cms * scale)
+```
+
+# 5. Hydraulic geometry from USGS channel measurements
+
+Velocity and depth are not in the sonde files, so they are predicted from discharge using
+power laws fitted to USGS streamflow measurements at the gauges. `read_waterdata_channel()`
+returns discharge, width and area for each measurement, so velocity is `V = Q / A` and mean
+depth is `D = A / W`. The fits are `V = a Q^b` and `D = c Q^f`. One regional fit is used for
+all sites unless a site's own gauge has at least `HG_MIN_MEAS` measurements.
+
+```{r hg}
+ch <- dataRetrieval::read_waterdata_channel(monitoring_location_id = usgs_ids) |>
+  sf::st_drop_geometry() |> as_tibble()
+glimpse(ch)                 # check the column names and units on first run
+count(ch, channel_name)     # if a "Total" row exists next to sub-channel rows, filter to it below
+```
+
+```{r hg-fit}
+HG_FROM <- as.Date("2000-01-01")   # channels change over decades; raise this if fits look noisy
+
+to_si <- function(x, unit, ft_factor) ifelse(grepl("ft", unit, ignore.case = TRUE), x * ft_factor, x)
+
+hg_meas <- ch |>
+  filter(as.Date(time) >= HG_FROM, !is.na(channel_width), !is.na(channel_area)) |>   # drops old flow-only rows
+  mutate(q_cms = to_si(channel_flow,  channel_flow_unit,  CFS_TO_CMS),
+         w_m   = to_si(channel_width, channel_width_unit, 0.3048),
+         a_m2  = to_si(channel_area,  channel_area_unit,  0.092903)) |>
+  group_by(monitoring_location_id, field_visit_id, measurement_number, time) |>      # one row per measurement
+  summarise(n_rows = n(), q_cms = sum(q_cms), w_m = sum(w_m), a_m2 = sum(a_m2), .groups = "drop") |>
+  mutate(v_ms = q_cms / a_m2, d_m = a_m2 / w_m) |>
+  filter(is.finite(v_ms), is.finite(d_m), q_cms > 0, v_ms > 0, d_m > 0)
+
+# diagnostics: usable measurements per gauge, and whether any measurement had several channel rows
+hg_meas |> group_by(monitoring_location_id) |>
+  summarise(n = n(), first = min(as.Date(time)), last = max(as.Date(time)),
+            multi_channel = sum(n_rows > 1), q_min = min(q_cms), q_max = max(q_cms))
+
+fit_hg <- function(d) {
+  mv <- lm(log(v_ms) ~ log(q_cms), d); md <- lm(log(d_m) ~ log(q_cms), d)
+  tibble(a_v = exp(coef(mv)[1]), b_v = coef(mv)[2], c_d = exp(coef(md)[1]), f_d = coef(md)[2],
+         n = nrow(d), r2_v = summary(mv)$r.squared, r2_d = summary(md)$r.squared)
+}
+hg_regional <- fit_hg(hg_meas)
+hg_by_gauge <- hg_meas |> group_by(monitoring_location_id) |> filter(n() >= HG_MIN_MEAS) |> group_modify(~ fit_hg(.x))
+list(regional = hg_regional, by_gauge = hg_by_gauge)
+```
+
+Sanity check: the velocity and depth exponents (`b_v`, `f_d`) should each be roughly 0.2 to 0.5,
+with `r2` well above zero. Values far outside that range usually mean a units problem
+or mixed total and sub-channel rows.
+
+# 6. K600 from hydraulics
+
+```{r k600}
+hg_for <- function(site_id, gauge_id) {
+  h <- hg_by_gauge |> filter(monitoring_location_id == gauge_id)
+  if (nrow(h)) h else hg_regional
+}
+
+k600_daily <- site_q |>
+  left_join(sites |> select(site, slope), by = "site") |>
+  filter(!is.na(slope), slope > 0, q_cms > 0) |>
+  mutate(
+    V  = hg_regional$a_v * q_cms^hg_regional$b_v,
+    D  = hg_regional$c_d * q_cms^hg_regional$f_d,
+    eD = G * slope * V,                                            # energy dissipation, m2 s-3
+    k600_eq4 = 5037 * (V * slope)^0.89 * D^0.54,                  # m/d, Raymond 2012 Eq. 4
+    k600_eq7 = 4725 * (V * slope)^0.86 * q_cms^-0.14 * D^0.66,    # m/d, Raymond 2012 Eq. 7
+    K600_eq4 = k600_eq4 / D, K600_eq7 = k600_eq7 / D,              # 1/d
+    high_energy = eD > ED_HIGH)
+
+# only days a sonde actually recorded dissolved oxygen
+read_do_days <- function(f) read_csv(f, col_types = cols_only(DateTime_UTC = col_character(), site = col_character(),
+                                      parameter = col_character(), value_final = col_double()), progress = FALSE) |>
+  filter(parameter == "DO", !is.na(value_final)) |> transmute(site, date = as.Date(substr(DateTime_UTC, 1, 10))) |> distinct()
+do_days <- list.files(DATA_DIR, "^CSU_ROSS_\\d{4}_cleaned\\.csv$", full.names = TRUE) |> map(read_do_days) |> bind_rows() |> distinct()
+
+k600_deployed <- inner_join(k600_daily, do_days, by = c("site", "date"))
+```
+
+# 7. Site priors
+
+```{r priors}
+k600_priors <- k600_deployed |>
+  group_by(site) |>
+  summarise(n_days = n(), flow_confidence = first(relation),
+            q_median_cms = median(q_cms), q_p10 = quantile(q_cms, .1), q_p90 = quantile(q_cms, .9),
+            slope = first(slope), pct_high_energy = round(100 * mean(high_energy)),
+            K600_prior   = median(K600_eq4),
+            K600_p10     = quantile(K600_eq4, .1), K600_p90 = quantile(K600_eq4, .9),
+            K600_sdlog   = pmax(sd(log(K600_eq4)), MIN_SDLOG),
+            K600_eq7_median = median(K600_eq7), .groups = "drop") |>
+  mutate(K600_eq4_vs_eq7 = round(K600_prior / K600_eq7_median, 2))
+
+# sites with no gauge or slope get the wide fallback
+missing <- setdiff(site_meta$site, k600_priors$site)
+k600_priors <- bind_rows(k600_priors, tibble(site = missing, flow_confidence = "none",
+                                             K600_prior = K600_FALLBACK, K600_sdlog = SDLOG_FALLBACK))
+# Manual, assumption-based priors for sites without usable flow (see k600_manual_overrides.csv).
+# These replace computed or fallback values and are labelled "manual assumption".
+MANUAL_FILE <- file.path(DATA_DIR, "k600_manual_overrides.csv")
+if (file.exists(MANUAL_FILE)) {
+  manual <- read_csv(MANUAL_FILE, show_col_types = FALSE)
+  k600_priors <- k600_priors |>
+    rows_upsert(manual |> transmute(site, K600_prior, K600_sdlog, flow_confidence = "manual assumption"), by = "site")
+}
+
+k600_priors |> arrange(match(site, site_meta$site))
+```
+
+Read this table before using it. If `pct_high_energy` is large, the Raymond equations are being
+applied outside the conditions they were fitted for. If `K600_eq4_vs_eq7` is far from 1, the two
+equations disagree and the prior is poorly constrained, so widen `K600_sdlog`.
+
+```{r plots, fig.height=9}
+k600_deployed |>
+  mutate(site = factor(site, levels = site_meta$site, labels = site_meta$site_label)) |>
+  ggplot(aes(q_cms, K600_eq4, colour = high_energy)) +
+  geom_point(alpha = 0.3, size = 0.7) + scale_x_log10() + scale_y_log10() +
+  scale_colour_manual(values = c(`FALSE` = "#33415C", `TRUE` = "#C0562B"), name = "eD above threshold") +
+  facet_wrap(~ site, ncol = 4, drop = FALSE) +
+  labs(title = "Flow-driven K600 on days with sonde data", x = expression(Q~(m^3~s^{-1})), y = expression(K[600]~(d^{-1}))) +
+  theme_minimal() + theme(legend.position = "top")
+```
+
+# 8. Write back to the metadata and export
+
+```{r export}
+site_meta_k <- site_meta_all |>
+  select(-any_of(c("K600_prior", "K600_sdlog"))) |>
+  left_join(k600_priors |> select(site, K600_prior, K600_sdlog, flow_confidence), by = "site")
+write_csv(site_meta_k, file.path(DATA_DIR, "site_metadata.csv"))   # read by streammetabolizer_updated.Rmd
+write_csv(k600_priors,  file.path(OUT_DIR, "k600_site_priors.csv"))
+write_csv(k600_deployed |> select(site, date, q_cms, V, D, slope, eD, high_energy, K600_eq4, K600_eq7),
+          file.path(OUT_DIR, "k600_daily_by_site.csv"))
+write_csv(flow_gauge, file.path(OUT_DIR, "gauge_daily_flow.csv"))
+```
+
+The last file is the flow series for the dashboard's flow overlay (`gauge_daily_flow.csv`
+joined to sites through `site_gauge_map.csv`).

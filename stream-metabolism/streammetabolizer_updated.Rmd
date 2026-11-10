@@ -1,0 +1,711 @@
+---
+title: "Stream metabolism on the Cache la Poudre and CSU campus sites"
+author: "Maggie Rouin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 11, fig.height = 7, dpi = 120)
+```
+
+# 0. Packages
+
+Run once (not evaluated when knitting). The old script installed `BASEmetab`
+and `LakeMetabolizer`; those are lake tools and are no longer needed.
+
+```{r install, eval=FALSE}
+install.packages(c("tidyverse", "zoo", "scales", "patchwork", "leaflet", "plotly", "ranger"))
+install.packages("remotes")
+remotes::install_github("DOI-USGS/streamMetabolizer")  # also needs rstan for the Bayesian option
+```
+
+```{r libs}
+library(tidyverse)   # dplyr, tidyr, readr, ggplot2, lubridate, purrr
+library(zoo)         # gap interpolation
+library(scales)
+library(patchwork)
+library(streamMetabolizer)
+```
+
+# 1. Settings
+
+Everything you might want to change lives here.
+
+```{r config}
+# ---- paths ------------------------------------------------------------------
+DATA_DIR   <- "project/data"   # CSU_ROSS_<year>_cleaned.csv live here
+META_FILE  <- file.path(DATA_DIR, "site_metadata.csv")
+OUT_DIR    <- "dashboard_data"                # tidy tables for the dashboard
+FIG_DIR    <- "figures"                       # static PNGs
+CACHE_DIR  <- "model_cache"                   # one .rds per site-year fit
+walk(c(OUT_DIR, FIG_DIR, CACHE_DIR), dir.create, showWarnings = FALSE)
+
+# ---- model ------------------------------------------------------------------
+# "bayes": K600 held near a per-site prior (recommended, slow, needs rstan)
+# "mle"  : fast preview only; K600 is fit freely and trades off with ER
+MODEL_TYPE     <- "bayes"
+RUN_MODELS     <- TRUE      # FALSE = only read what is already in CACHE_DIR
+K600_DEFAULT   <- 30        # 1/d, used for sites with no K600_prior in site_metadata.csv
+K600_SDLOG     <- 0.15      # prior width (log scale); small = K600 nearly fixed
+MIN_DEPTH_M    <- 0.05      # depth readings below this are treated as sensor error
+STEPS_PER_DAY  <- 96        # 15-minute data
+MAX_GAP_STEPS  <- 8         # interpolate gaps up to 2 h; longer gaps drop the day
+MIN_DAYS_FIT   <- 5         # skip site-years with fewer modelable days
+EXCLUDE_SITES  <- c("pman", "penn", "lbea")   # dropped from every figure, model run and export
+
+# ---- QC on model output (Appling et al. 2018 style plausibility rules) -------
+GPP_MAX        <- 50        # g O2 m-2 d-1
+ER_MIN         <- -100      # ER is NEGATIVE in streamMetabolizer
+RHAT_MAX       <- 1.1       # Bayesian runs only
+MIN_DAYS_MONTH <- 5         # minimum good days to report a monthly mean
+MAX_LINE_GAP_DAYS <- 7      # break plotted lines across longer gaps (sonde pulls)
+```
+
+# 2. Read the yearly files
+
+The cleaned files are now long format (`DateTime_UTC, site, parameter, units,
+value_raw, value_final, user_qc_flag`). `value_final` is already `NA` where a
+point was excluded by QC, so no extra filtering of flags is needed. Year files
+overlap at the boundaries, so duplicate rows are removed.
+
+```{r read}
+param_map <- c("DO" = "do_mgl", "Temperature" = "temp_c", "Depth" = "depth_m",
+               "Specific Conductivity" = "spc_uscm", "Turbidity" = "turb_ntu",
+               "pH" = "ph", "ORP" = "orp_v",
+               "Chl-a Fluorescence" = "chla_rfu", "FDOM Fluorescence" = "fdom_rfu")
+
+read_ross <- function(path) {
+  read_csv(path, progress = FALSE,
+           col_types = cols(DateTime_UTC = col_character(), site = col_character(),
+                            parameter = col_character(), units = col_character(),
+                            value_raw = col_double(), value_final = col_double(),
+                            user_qc_flag = col_character(), modifications = col_character())) |>
+    filter(parameter %in% names(param_map)) |>
+    transmute(datetime = ymd_hms(DateTime_UTC, tz = "UTC"),
+              site, var = unname(param_map[parameter]), value = value_final)
+}
+
+files <- list.files(DATA_DIR, pattern = "^CSU_ROSS_\\d{4}_cleaned\\.csv$", full.names = TRUE)
+stopifnot(length(files) > 0)
+
+sensor <- map(files, read_ross) |>
+  list_rbind() |>
+  arrange(is.na(value)) |>                                   # keep the non-NA copy of duplicates
+  distinct(datetime, site, var, .keep_all = TRUE) |>
+  pivot_wider(names_from = var, values_from = value) |>
+  arrange(site, datetime) |>
+  filter(!site %in% EXCLUDE_SITES)
+
+cat("Rows:", nrow(sensor), "| Sites:", n_distinct(sensor$site),
+    "| Range:", format(min(sensor$datetime)), "to", format(max(sensor$datetime)))
+```
+
+# 3. Site metadata
+
+`site_metadata.csv` (provided alongside this script) was built from
+`CSU_ROSS_sonde_location_metadata.csv`: one row per site using its **current**
+sonde location (ELC and Bellvue were moved; the shift is a few hundred metres,
+which does not matter for solar time or light). It also holds a K600 prior,
+display labels, a plotting order (roughly upstream to downstream, Poudre
+mainstem first, then tributaries; edit `order` to change it), and the gauge
+named in `flow_source`. Elevation is filled in for four sites and fetched from
+the coordinates with `elevatr` for the rest (needs internet). Sites that end up
+without lat/lon/elevation cannot be modeled but still appear in every figure
+as "no estimate".
+
+```{r meta}
+site_meta <- read_csv(META_FILE, show_col_types = FALSE)
+if (!"K600_sdlog" %in% names(site_meta)) site_meta$K600_sdlog <- NA_real_   # written by k600_from_flow.Rmd
+site_meta <- site_meta |>
+  mutate(K600_prior = coalesce(K600_prior, K600_DEFAULT),
+         K600_sdlog = coalesce(K600_sdlog, K600_SDLOG))
+
+# any site in the data but not in the metadata file is appended
+extra <- setdiff(unique(sensor$site), site_meta$site)
+if (length(extra)) site_meta <- bind_rows(site_meta, tibble(site = extra, site_label = toupper(extra), K600_prior = K600_DEFAULT, K600_sdlog = K600_SDLOG))
+
+site_meta <- site_meta |>
+  mutate(order = coalesce(order, 100 + rank(site, ties.method = "first"))) |>
+  arrange(order) |>
+  filter(site %in% sensor$site)
+
+site_levels <- site_meta$site
+site_labels <- site_meta$site_label
+as_site_f   <- function(x) factor(x, levels = site_levels, labels = site_labels)
+
+# fill missing elevation from coordinates if elevatr is available
+need_elev <- which(is.na(site_meta$elev_m) & !is.na(site_meta$lat) & !is.na(site_meta$lon))
+if (length(need_elev) && requireNamespace("elevatr", quietly = TRUE)) {
+  pts <- data.frame(x = site_meta$lon[need_elev], y = site_meta$lat[need_elev])
+  site_meta$elev_m[need_elev] <- elevatr::get_elev_point(pts, prj = "+proj=longlat +datum=WGS84", src = "aws")$elevation
+}
+
+modelable <- site_meta |> filter(!is.na(lat), !is.na(lon), !is.na(elev_m)) |> pull(site)
+skipped   <- setdiff(site_levels, modelable)
+if (length(skipped)) message("No coordinates/elevation, not modeled: ", paste(skipped, collapse = ", "))
+```
+
+# 4. Shared look for every figure
+
+```{r theme}
+gpp_col <- "#2E8B57"; er_col <- "#C0562B"; nep_pos <- "#2E8B57"; nep_neg <- "#8C510A"
+
+theme_metab <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(plot.title      = element_text(face = "bold", size = base_size + 4),
+          plot.subtitle   = element_text(colour = "grey35", margin = margin(b = 8)),
+          strip.text      = element_text(face = "bold", hjust = 0),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_line(colour = "grey90", linewidth = 0.3),
+          axis.title      = element_text(colour = "grey25"),
+          legend.position = "top", legend.title = element_blank(),
+          plot.background = element_rect(fill = "white", colour = NA))
+}
+theme_set(theme_metab())
+
+lab_gpp <- expression(GPP~(g~O[2]~m^{-2}~d^{-1}))
+lab_er  <- expression(ER~(g~O[2]~m^{-2}~d^{-1}))
+lab_nep <- expression(NEP~(g~O[2]~m^{-2}~d^{-1}))
+
+save_fig <- function(p, name, w = 12, h = 8) ggsave(file.path(FIG_DIR, paste0(name, ".png")), p, width = w, height = h, dpi = 300, bg = "white")
+
+# adds a quiet "no estimate" tag to facets that have no data
+tag_empty <- function(p, data, ...) {
+  empty <- setdiff(levels(as_site_f(site_levels)), unique(as.character(data$site_f)))
+  if (!length(empty)) return(p)
+  p + geom_text(data = tibble(site_f = factor(empty, levels = levels(as_site_f(site_levels)))),
+                aes(label = "no estimate"), x = -Inf, y = Inf, hjust = -0.1, vjust = 1.6,
+                size = 3, colour = "grey55", inherit.aes = FALSE)
+}
+```
+
+# 5. Where do we have data?
+
+Which sites were deployed when. The set of sites changes every year, so this
+is the reference for reading every later figure.
+
+```{r coverage, fig.height=7}
+coverage <- sensor |>
+  filter(!is.na(do_mgl)) |>
+  mutate(date = as.Date(datetime), month = floor_date(date, "month")) |>
+  group_by(site, month) |>
+  summarise(days = n_distinct(date), .groups = "drop") |>
+  mutate(site_f = as_site_f(site))
+
+p_cov <- ggplot(coverage, aes(month, fct_rev(site_f), fill = days)) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  scale_fill_viridis_c(option = "mako", direction = -1, name = "Days with DO data") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", expand = c(0, 0)) +
+  scale_y_discrete(drop = FALSE) +
+  labs(title = "Sonde deployment coverage", subtitle = "Days per month with dissolved-oxygen data; gaps are winter pulls and outages",
+       x = NULL, y = NULL) +
+  theme(legend.position = "right", legend.title = element_text(), panel.grid = element_blank())
+p_cov
+save_fig(p_cov, "01_deployment_coverage", 12, 6)
+```
+
+# 6. Build model inputs
+
+streamMetabolizer needs `solar.time, DO.obs, DO.sat, depth, temp.water, light`
+on a regular 15-minute grid. Changes from the original script:
+
+* **Measured depth** replaces the constant `0.5 m` (readings below `MIN_DEPTH_M` are treated as sensor error).
+* Short gaps (up to 2 h) are interpolated; **any day that still has missing data is dropped** rather than fed to the model.
+* Each "model day" is the 04:00 to 04:00 mean-solar-time window the package uses.
+
+```{r inputs}
+model_input <- sensor |>
+  filter(site %in% modelable) |>
+  select(site, datetime, do_mgl, temp_c, depth_m) |>
+  mutate(depth_m = if_else(depth_m < MIN_DEPTH_M, NA_real_, depth_m)) |>
+  group_by(site) |>
+  complete(datetime = seq(min(datetime), max(datetime), by = "15 min")) |>
+  arrange(datetime, .by_group = TRUE) |>
+  mutate(across(c(do_mgl, temp_c, depth_m),
+                ~ zoo::na.approx(.x, maxgap = MAX_GAP_STEPS, na.rm = FALSE))) |>
+  ungroup() |>
+  left_join(site_meta |> select(site, lat, lon, elev_m), by = "site") |>
+  group_by(site) |>
+  mutate(
+    solar.time = calc_solar_time(datetime, longitude = lon[1]),   # mean solar time, as in the original script
+    light      = calc_light(solar.time, latitude = lat[1], longitude = lon[1], attach.units = FALSE),
+    pressure   = calc_air_pressure(elevation = elev_m[1]),
+    DO.sat     = calc_DO_sat(temp_c, pressure.air = pressure)
+  ) |>
+  ungroup() |>
+  rename(DO.obs = do_mgl, temp.water = temp_c, depth = depth_m) |>
+  drop_na(DO.obs, DO.sat, temp.water, depth, light) |>
+  mutate(model_date = as.Date(solar.time - hours(4))) |>
+  group_by(site, model_date) |>
+  filter(n() >= STEPS_PER_DAY) |>           # complete days only
+  ungroup() |>
+  arrange(site, solar.time) |>
+  distinct(site, solar.time, .keep_all = TRUE)
+
+model_input |> count(site, name = "usable_steps") |> mutate(usable_days = usable_steps / STEPS_PER_DAY)
+```
+
+# 7. Fit the models
+
+**K600.** K600 cannot be measured here (no tracer studies) and, if left free,
+it trades off against ER (Appling et al. 2018, *Sci. Data*/*JGR-Biogeosciences*).
+With `MODEL_TYPE = "bayes"` each site gets a lognormal K600 prior centred on its
+`K600_prior` with a narrow spread (`K600_SDLOG`). Replace the `K600_prior` column
+in `site_metadata.csv` with reach-specific estimates (for example from
+Raymond et al. 2012 hydraulic equations using each site's slope and velocity)
+and re-run. Until then every site uses `K600_DEFAULT`, the value from the
+original script.
+
+Fits are cached per site-year in `model_cache/`, so re-knitting is fast and a
+crash does not lose finished work. Test one site-year first before running everything.
+
+```{r models}
+make_specs <- function(K600, sdlog = K600_SDLOG) {
+  if (MODEL_TYPE == "bayes") {
+    nm <- mm_name(type = "bayes", pool_K600 = "none", err_obs_iid = TRUE, err_proc_iid = TRUE,
+                  ode_method = "trapezoid", deficit_src = "DO_mod", engine = "stan")
+    specs(nm, K600_daily_meanlog = log(K600), K600_daily_sdlog = sdlog,
+          burnin_steps = 500, saved_steps = 500, n_chains = 2, n_cores = 2)
+  } else {
+    specs(mm_name(type = "mle"))
+  }
+}
+
+fit_one <- function(dat, site, yr, K600, sdlog = K600_SDLOG) {
+  cache_file <- file.path(CACHE_DIR, sprintf("%s_%s_%s.rds", MODEL_TYPE, site, yr))
+  if (file.exists(cache_file)) return(readRDS(cache_file))
+  if (!RUN_MODELS) return(NULL)
+  message("Fitting ", site, " ", yr, " (", nrow(dat) / STEPS_PER_DAY, " days)")
+  out <- tryCatch({
+    fit <- metab(specs = make_specs(K600, sdlog), data = dat)
+    left_join(as_tibble(predict_metab(fit)), as_tibble(get_params(fit)),
+              by = "date", suffix = c("", ".par")) |>
+      mutate(site = site)
+  }, error = function(e) { message("  failed: ", conditionMessage(e)); NULL })
+  if (!is.null(out)) saveRDS(out, cache_file)
+  out
+}
+
+jobs <- model_input |> mutate(yr = year(model_date)) |> group_by(site, yr) |> group_split()
+
+daily_raw <- map(jobs, \(d) {
+  if (n_distinct(d$model_date) < MIN_DAYS_FIT) return(NULL)
+  s <- d$site[1]
+  fit_one(as.data.frame(select(d, solar.time, DO.obs, DO.sat, depth, temp.water, light)),
+          s, d$yr[1], site_meta$K600_prior[site_meta$site == s], site_meta$K600_sdlog[site_meta$site == s])
+}) |> bind_rows()
+
+stopifnot("No model results found: check RUN_MODELS / model_cache" = nrow(daily_raw) > 0)
+```
+
+# 8. Clean results and derive NEP
+
+**Sign convention:** in streamMetabolizer, ER is *negative* (oxygen consumed).
+So **NEP = GPP + ER**. The original script used `GPP - ER`, which double-counts
+respiration and is the likely cause of the extreme NEP values noted for CHD in 2024.
+
+```{r clean}
+daily_clean <- rename_with(daily_raw, ~ gsub("\\.", "_", .x))
+for (cn in c("GPP_Rhat", "ER_Rhat", "K600_daily")) if (!cn %in% names(daily_clean)) daily_clean[[cn]] <- NA_real_
+
+daily_all <- daily_clean |>
+  transmute(site, date, GPP, ER, NEP = GPP + ER, PR = GPP / abs(ER),
+            K600 = K600_daily, GPP_Rhat, ER_Rhat) |>
+  mutate(
+    year  = year(date), month = month(date),
+    season = factor(case_when(month %in% 3:5 ~ "Spring", month %in% 6:8 ~ "Summer",
+                              month %in% 9:11 ~ "Fall", TRUE ~ "Winter"),
+                    levels = c("Spring", "Summer", "Fall", "Winter")),
+    qc_pass = GPP > 0 & ER < 0 & GPP <= GPP_MAX & ER >= ER_MIN &
+      (is.na(GPP_Rhat) | GPP_Rhat < RHAT_MAX) & (is.na(ER_Rhat) | ER_Rhat < RHAT_MAX),
+    site_f = as_site_f(site)
+  )
+
+daily <- filter(daily_all, qc_pass)
+
+daily_all |> group_by(site) |>
+  summarise(days_modeled = n(), days_kept = sum(qc_pass), pct_kept = round(100 * mean(qc_pass))) |>
+  arrange(desc(days_modeled))
+```
+
+# 9. Figures
+
+Every figure draws all sites in the data. Sites that were not modeled (or have
+no passing days) appear as empty panels tagged "no estimate".
+
+## 9.1 Daily GPP and ER
+
+Points are daily values; lines are 7-day rolling means. ER is plotted below zero, GPP above, so the gap between them is NEP.
+
+```{r ts-gpp-er, fig.height=12}
+roll7 <- function(x) if (length(x) < 7) rep(NA_real_, length(x)) else as.numeric(stats::filter(x, rep(1/7, 7), sides = 2))
+
+segment_gaps <- function(df, value_col) {
+  df |> arrange(site_f, date) |>
+    group_by(site_f) |>
+    mutate(seg = cumsum(coalesce(as.numeric(date - lag(date)) > MAX_LINE_GAP_DAYS, FALSE))) |>
+    group_by(site_f, seg) |>
+    mutate(roll = roll7({{ value_col }})) |>
+    ungroup()
+}
+
+ts_long <- daily |>
+  pivot_longer(c(GPP, ER), names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric, c("GPP", "ER"))) |>
+  arrange(site_f, metric, date) |>
+  group_by(site_f, metric) |>
+  mutate(seg = cumsum(coalesce(as.numeric(date - lag(date)) > MAX_LINE_GAP_DAYS, FALSE))) |>
+  group_by(site_f, metric, seg) |>
+  mutate(roll = roll7(value)) |>
+  ungroup()
+
+p_ts <- ggplot(ts_long, aes(date, value, colour = metric)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_point(alpha = 0.25, size = 0.6) +
+  geom_line(aes(y = roll, group = interaction(metric, seg)), linewidth = 0.7, na.rm = TRUE) +
+  scale_colour_manual(values = c(GPP = gpp_col, ER = er_col)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  facet_wrap(~ site_f, ncol = 3, scales = "free_y", drop = FALSE) +
+  labs(title = "Daily gross primary production and ecosystem respiration",
+       x = NULL, y = expression(g~O[2]~m^{-2}~d^{-1}))
+p_ts <- tag_empty(p_ts, ts_long)
+p_ts
+save_fig(p_ts, "02_daily_gpp_er", 12, 13)
+```
+
+## 9.2 Net ecosystem production
+
+Green = net autotrophic day (NEP > 0), brown = net heterotrophic (NEP < 0).
+
+```{r ts-nep, fig.height=12}
+nep_ts <- segment_gaps(daily, NEP)
+
+p_nep <- ggplot(nep_ts, aes(date, NEP)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_point(aes(colour = NEP > 0), alpha = 0.35, size = 0.7, show.legend = FALSE) +
+  geom_line(aes(y = roll, group = seg), colour = "grey20", linewidth = 0.6, na.rm = TRUE) +
+  scale_colour_manual(values = c(`TRUE` = nep_pos, `FALSE` = nep_neg)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  facet_wrap(~ site_f, ncol = 3, scales = "free_y", drop = FALSE) +
+  labs(title = "Daily net ecosystem production (NEP = GPP + ER)",
+       subtitle = "Line = 7-day rolling mean", x = NULL, y = lab_nep)
+p_nep <- tag_empty(p_nep, nep_ts)
+p_nep
+save_fig(p_nep, "03_daily_nep", 12, 13)
+```
+
+## 9.3 Monthly averages, one line per year
+
+```{r monthly}
+monthly <- daily |>
+  group_by(site, site_f, year, month) |>
+  summarise(n_days = n(),
+            across(c(GPP, ER, NEP),
+                   list(mean = ~ mean(.x), sd = ~ sd(.x), median = ~ median(.x)),
+                   .names = "{.col}_{.fn}"),
+            .groups = "drop") |>
+  filter(n_days >= MIN_DAYS_MONTH)
+
+plot_seasonal <- function(var, ylab, title) {
+  p <- ggplot(monthly, aes(month, .data[[var]], colour = factor(year), group = year)) +
+    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+    geom_line(linewidth = 0.6) + geom_point(size = 1.4) +
+    scale_colour_viridis_d(option = "viridis", end = 0.9) +
+    scale_x_continuous(breaks = 3:11, labels = month.abb[3:11]) +
+    facet_wrap(~ site_f, ncol = 3, scales = "free_y", drop = FALSE) +
+    labs(title = title, subtitle = paste0("Months with at least ", MIN_DAYS_MONTH, " good days"),
+         x = NULL, y = ylab)
+  tag_empty(p, monthly)
+}
+
+p_m_gpp <- plot_seasonal("GPP_mean", lab_gpp, "Monthly mean GPP by year")
+p_m_er  <- plot_seasonal("ER_mean",  lab_er,  "Monthly mean ER by year")
+p_m_gpp; p_m_er
+save_fig(p_m_gpp, "04_monthly_gpp", 12, 13)
+save_fig(p_m_er,  "05_monthly_er",  12, 13)
+```
+
+## 9.4 Boxplots by year and by month
+
+Box = interquartile range, line = median, white diamond = mean.
+
+```{r boxplots, fig.height=12}
+plot_box <- function(df, x, y, colour, ylab, title, xlabs = NULL) {
+  p <- ggplot(df, aes(.data[[x]], .data[[y]])) +
+    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+    geom_boxplot(fill = alpha(colour, 0.35), colour = colour, linewidth = 0.4,
+                 outlier.size = 0.5, outlier.alpha = 0.4, width = 0.65) +
+    stat_summary(fun = mean, geom = "point", shape = 23, fill = "white", colour = "grey20", size = 1.8) +
+    facet_wrap(~ site_f, ncol = 3, scales = "free_y", drop = FALSE) +
+    labs(title = title, x = NULL, y = ylab)
+  tag_empty(p, df)
+}
+
+daily_b <- daily |> mutate(year_f = factor(year), month_f = factor(month, 1:12, month.abb))
+
+p_by_gpp <- plot_box(daily_b, "year_f",  "GPP", gpp_col, lab_gpp, "GPP by year")
+p_by_er  <- plot_box(daily_b, "year_f",  "ER",  er_col,  lab_er,  "ER by year")
+p_bm_gpp <- plot_box(daily_b, "month_f", "GPP", gpp_col, lab_gpp, "GPP by month")
+p_bm_er  <- plot_box(daily_b, "month_f", "ER",  er_col,  lab_er,  "ER by month")
+p_by_gpp; p_by_er; p_bm_gpp; p_bm_er
+save_fig(p_by_gpp, "06_box_year_gpp", 12, 13); save_fig(p_by_er, "07_box_year_er", 12, 13)
+save_fig(p_bm_gpp, "08_box_month_gpp", 12, 13); save_fig(p_bm_er, "09_box_month_er", 12, 13)
+```
+
+## 9.5 Is a site autotrophic or heterotrophic?
+
+Points above the dashed 1:1 line have GPP > |ER| (net autotrophic).
+
+```{r crossplot, fig.height=12}
+lim <- c(0, quantile(c(daily$GPP, -daily$ER), 0.99, na.rm = TRUE))
+
+p_cross <- ggplot(daily, aes(GPP, -ER, colour = factor(year))) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey40") +
+  geom_point(alpha = 0.5, size = 0.9) +
+  scale_colour_viridis_d(option = "viridis", end = 0.9) +
+  coord_equal(xlim = lim, ylim = lim) +
+  facet_wrap(~ site_f, ncol = 4, drop = FALSE) +
+  labs(title = "GPP versus ecosystem respiration",
+       x = lab_gpp, y = expression("|ER|"~(g~O[2]~m^{-2}~d^{-1})))
+p_cross <- tag_empty(p_cross, daily)
+p_cross
+save_fig(p_cross, "10_gpp_vs_er", 12, 11)
+```
+
+## 9.6 Model check: K600
+
+If the Bayesian option is used, K600 should sit tightly around each site's prior.
+Wide scatter means the prior is too loose or the data cannot constrain it.
+
+```{r k600, fig.height=12}
+p_k <- daily_all |>
+  filter(!is.na(K600)) |>
+  ggplot(aes(date, K600)) +
+  geom_point(alpha = 0.3, size = 0.6, colour = "#33415C") +
+  scale_y_log10() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  facet_wrap(~ site_f, ncol = 3, drop = FALSE) +
+  labs(title = "Estimated K600", x = NULL, y = expression(K[600]~(d^{-1})))
+p_k <- tag_empty(p_k, filter(daily_all, !is.na(K600)))
+p_k
+save_fig(p_k, "11_k600_check", 12, 13)
+```
+
+# 10. What drives metabolism?
+
+Daily sensor covariates (temperature, conductivity, turbidity, pH, chl-a, fDOM,
+depth as a stage proxy) plus mean daily light are joined to the daily GPP and
+|ER|. No discharge or precipitation is in the sonde files. To add them as
+overlays/drivers, save a file `flow_precip_daily.csv` in `DATA_DIR` with columns
+`date, discharge_cms, precip_mm` and it will be picked up automatically.
+
+```{r drivers-data}
+covars_daily <- sensor |>
+  mutate(date = as.Date(datetime, tz = "America/Denver")) |>
+  group_by(site, date) |>
+  summarise(across(any_of(c("temp_c", "spc_uscm", "turb_ntu", "ph", "orp_v", "chla_rfu", "fdom_rfu", "depth_m")),
+                   ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)),
+            .groups = "drop")
+
+light_daily <- model_input |>
+  group_by(site, date = model_date) |>
+  summarise(par_mean = mean(light), .groups = "drop")
+
+driver_df <- daily |>
+  left_join(covars_daily, by = c("site", "date")) |>
+  left_join(light_daily,  by = c("site", "date"))
+
+flow_file <- file.path(DATA_DIR, "flow_precip_daily.csv")
+if (file.exists(flow_file)) {
+  driver_df <- left_join(driver_df, read_csv(flow_file, show_col_types = FALSE) |> mutate(date = as.Date(date)), by = "date")
+}
+
+driver_labels <- c(par_mean = "Light (PAR)", temp_c = "Water temperature", depth_m = "Depth (stage proxy)",
+                   spc_uscm = "Specific conductivity", turb_ntu = "Turbidity", ph = "pH", orp_v = "ORP",
+                   chla_rfu = "Chl-a fluorescence", fdom_rfu = "fDOM fluorescence",
+                   discharge_cms = "Discharge", precip_mm = "Precipitation")
+driver_vars <- intersect(names(driver_labels), names(driver_df))
+```
+
+## 10.1 Correlation of each driver with GPP and respiration, by site
+
+Spearman rank correlation. Respiration is shown as magnitude (|ER|) so that a
+positive correlation always means "more respiration". Grey = fewer than 30 paired days.
+
+```{r drivers-cor, fig.height=7}
+cors <- driver_df |>
+  mutate(`|ER|` = -ER) |>
+  pivot_longer(c(GPP, `|ER|`), names_to = "response", values_to = "resp") |>
+  pivot_longer(all_of(driver_vars), names_to = "driver", values_to = "x") |>
+  filter(!is.na(resp), !is.na(x)) |>
+  group_by(site, site_f, response, driver) |>
+  summarise(n = n(), rho = if (n() >= 30 && sd(x) > 0) cor(x, resp, method = "spearman") else NA_real_,
+            .groups = "drop") |>
+  mutate(driver = factor(driver, levels = rev(driver_vars), labels = rev(driver_labels[driver_vars])))
+
+p_cor <- ggplot(cors, aes(site_f, driver, fill = rho)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_text(aes(label = ifelse(is.na(rho), "", sprintf("%.2f", rho))), size = 2.6) +
+  scale_fill_gradient2(low = "#B2182B", mid = "white", high = "#2166AC", limits = c(-1, 1),
+                       na.value = "grey93", name = "Spearman\nrho") +
+  scale_x_discrete(drop = FALSE) +
+  facet_wrap(~ response, ncol = 1) +
+  labs(title = "Environmental correlates of metabolism", x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid = element_blank(),
+        legend.position = "right", legend.title = element_text())
+p_cor
+save_fig(p_cor, "12_driver_correlations", 12, 9)
+```
+
+## 10.2 Which variables matter most (all sites pooled)
+
+Random forest permutation importance, rescaled to percent of the total.
+Predictors with more than 40% missing days are dropped first (chl-a and fDOM
+were not recorded in every year). Day of year is included so seasonality is not
+credited to temperature or light alone.
+
+```{r drivers-rf, eval=requireNamespace("ranger", quietly = TRUE)}
+rf_vars <- driver_vars[colMeans(!is.na(driver_df[driver_vars])) > 0.6]
+
+rf_importance <- map(c(GPP = "GPP", `|ER|` = "ER_mag"), \(resp) {
+  d <- driver_df |> mutate(ER_mag = -ER, doy = yday(date)) |>
+    select(y = all_of(resp), all_of(rf_vars), doy) |> drop_na()
+  rf <- ranger::ranger(y ~ ., data = d, num.trees = 500, importance = "permutation", seed = 1)
+  imp <- pmax(rf$variable.importance, 0)
+  tibble(driver = names(imp), pct = 100 * imp / sum(imp), n_days = nrow(d))
+}) |> list_rbind(names_to = "response") |>
+  mutate(driver = recode(driver, doy = "Day of year", !!!driver_labels))
+
+p_rf <- ggplot(rf_importance, aes(pct, reorder(driver, pct), fill = response)) +
+  geom_col(show.legend = FALSE, width = 0.7) +
+  scale_fill_manual(values = c(GPP = gpp_col, `|ER|` = er_col)) +
+  facet_wrap(~ response) +
+  labs(title = "Relative importance of drivers", x = "Importance (% of total)", y = NULL)
+p_rf
+save_fig(p_rf, "13_driver_importance", 11, 5)
+```
+
+# 11. Interactive previews (dashboard prototypes)
+
+A site map, and an interactive version of one site's time series. These are
+the building blocks for the dashboard.
+
+```{r map, eval=requireNamespace("leaflet", quietly = TRUE)}
+map_df <- site_meta |>
+  filter(!is.na(lat), !is.na(lon)) |>
+  left_join(daily |> group_by(site) |>
+              summarise(days = n(), GPP = mean(GPP), ER = mean(ER),
+                        years = paste(range(year), collapse = "-")), by = "site")
+
+leaflet::leaflet(map_df) |>
+  leaflet::addProviderTiles(leaflet::providers$CartoDB.Positron) |>
+  leaflet::addCircleMarkers(~lon, ~lat, radius = 8, color = "#264653", fillColor = "#2E8B57", fillOpacity = 0.85,
+    label = ~site_label,
+    popup = ~sprintf("<b>%s</b><br>%s m elev.<br>%s good days (%s)<br>mean GPP %.1f, mean ER %.1f",
+                     site_label, elev_m, days, years, GPP, ER))
+```
+
+```{r plotly, eval=requireNamespace("plotly", quietly = TRUE)}
+first_site <- levels(droplevels(ts_long$site_f))[1]
+plotly::ggplotly(
+  ts_long |> filter(site_f == first_site) |>
+    ggplot(aes(date, value, colour = metric, group = interaction(metric, seg))) +
+    geom_point(alpha = 0.3, size = 0.8) + geom_line(aes(y = roll), na.rm = TRUE) +
+    scale_colour_manual(values = c(GPP = gpp_col, ER = er_col)) +
+    labs(title = paste("Daily GPP and ER:", first_site), x = NULL, y = "g O2 / m2 / d"))
+```
+
+# 12. Export tidy tables for the dashboard
+
+All tables are long/tidy with `site`, `site_label`, `date`, `year`, `month`
+so a dashboard (Shiny, Observable, Power BI, etc.) can filter and toggle without
+reshaping. Flagged-out days stay in `daily_metabolism.csv` with `qc_pass = FALSE`.
+
+```{r export}
+labels_df <- site_meta |> select(any_of(c("site", "site_label", "group", "lat", "lon", "elev_m", "K600_prior", "order", "description", "flow_source")))
+
+daily_all |>
+  select(-site_f) |>
+  left_join(labels_df |> select(site, site_label), by = "site") |>
+  write_csv(file.path(OUT_DIR, "daily_metabolism.csv"))
+
+monthly |> select(-site_f) |> write_csv(file.path(OUT_DIR, "monthly_summary.csv"))
+
+daily |>
+  group_by(site, year) |>
+  summarise(n_days = n(),
+            across(c(GPP, ER, NEP), list(mean = ~ mean(.x), sd = ~ sd(.x), median = ~ median(.x)), .names = "{.col}_{.fn}"),
+            .groups = "drop") |>
+  write_csv(file.path(OUT_DIR, "yearly_summary.csv"))
+
+driver_df |> select(-site_f) |> write_csv(file.path(OUT_DIR, "drivers_daily.csv"))
+cors |> mutate(driver = as.character(driver), site_f = NULL) |> write_csv(file.path(OUT_DIR, "driver_correlations.csv"))
+if (exists("rf_importance")) write_csv(rf_importance, file.path(OUT_DIR, "driver_importance.csv"))
+
+labels_df |> write_csv(file.path(OUT_DIR, "site_metadata.csv"))
+coverage |> select(-site_f) |> write_csv(file.path(OUT_DIR, "deployment_coverage.csv"))
+
+list.files(OUT_DIR)
+```
+
+## 12.1 One file for the dashboard
+
+`dashboard.html` reads a single file, `dashboard_data/data.js`. Keep `dashboard.html`
+and the `dashboard_data/` folder together (same parent folder) and open the html file in a browser.
+Optional inputs, picked up automatically if they exist in `dashboard_data/`:
+
+* `k600_daily_by_site.csv` (written by `k600_from_flow.Rmd`): per-site daily flow for the flow overlay.
+* `flow_precip_daily.csv` in `DATA_DIR` (columns `date, precip_mm`): precipitation overlay.
+* `site_visits.csv`: columns `id, site, date, type, tech, notes, issue`. Use the Export button on the dashboard's
+  Site visits tab to create it, then re-run this chunk so everyone sees the same visit log.
+
+```{r dashboard-data}
+library(jsonlite)
+
+cols <- function(df) { df <- as_tibble(df); df[] <- lapply(df, function(x) if (inherits(x, c("Date", "POSIXt"))) format(x) else x); as.list(df) }
+opt_csv <- function(path) if (file.exists(path)) read_csv(path, show_col_types = FALSE) else NULL
+
+sites_out <- site_meta |>
+  filter(site %in% unique(daily_all$site) | site %in% sensor$site) |>
+  mutate(flow_confidence = if ("flow_confidence" %in% names(pick(everything()))) coalesce(flow_confidence, "unknown") else "unknown") |>
+  select(any_of(c("site", "site_label", "group", "lat", "lon", "elev_m", "description", "flow_confidence", "K600_prior", "K600_sdlog", "order")))
+
+daily_out <- daily_all |> select(site, date, GPP, ER, NEP, PR, K600, qc_pass)
+
+cov_cols <- c("temp_c", "spc_uscm", "turb_ntu", "ph", "orp_v", "chla_rfu", "fdom_rfu", "depth_m", "par_mean")
+covars_out <- driver_df |> select(site, date, any_of(cov_cols))
+
+flow_k <- opt_csv(file.path(OUT_DIR, "k600_daily_by_site.csv"))
+flow_out <- if (!is.null(flow_k)) flow_k |> filter(site %in% sites_out$site) |> select(site, date, q_cms) else tibble(site = character(), date = as.Date(character()), q_cms = numeric())
+
+pp <- opt_csv(file.path(DATA_DIR, "flow_precip_daily.csv"))
+precip_out <- if (!is.null(pp) && "precip_mm" %in% names(pp)) pp |> transmute(date = as.Date(date), precip_mm) |> filter(!is.na(precip_mm)) else tibble(date = as.Date(character()), precip_mm = numeric())
+
+vis <- opt_csv(file.path(OUT_DIR, "site_visits.csv"))
+vis_out <- if (!is.null(vis)) vis |> mutate(across(everything(), as.character)) |> select(any_of(c("id", "site", "date", "type", "tech", "notes", "issue"))) else tibble(id = character(), site = character(), date = character(), type = character(), tech = character(), notes = character(), issue = character())
+
+imp_out <- if (exists("rf_importance")) rf_importance |> select(response, driver, pct) else tibble(response = character(), driver = character(), pct = numeric())
+
+payload <- list(
+  generated = format(Sys.time(), "%Y-%m-%d %H:%M"),
+  model = paste0(MODEL_TYPE, " (K600 prior from k600_from_flow.Rmd)"),
+  sites = cols(sites_out), daily = cols(daily_out), covars = cols(covars_out), flow = cols(flow_out),
+  precip = cols(precip_out), coverage = cols(coverage |> select(site, month, days)),
+  importance = cols(imp_out), visits = cols(vis_out))
+
+js <- toJSON(payload, dataframe = "columns", na = "null", digits = 4, auto_unbox = TRUE)
+writeLines(paste0("window.RIVER_DATA = ", js, ";"), file.path(OUT_DIR, "data.js"))
+cat("Wrote", file.path(OUT_DIR, "data.js"), "-", round(file.size(file.path(OUT_DIR, "data.js")) / 1e6, 1), "MB\n")
+```
+
+# 13. Notes to carry into the write-up
+
+* Days failing the plausibility rules (GPP <= 0, ER >= 0, or beyond `GPP_MAX`/`ER_MIN`) are excluded from figures but kept in the export. Report how many were removed per site (table in section 8) rather than describing a y-axis clip, which replaces the old "limits = c(-100, 100)" approach.
+* The two sites with almost no usable DO/depth days (`lbea`, `penn`) and sites without coordinates will show "no estimate".
+* Because K600 is held near a site prior rather than measured, report GPP and ER as conditional on that K600 and, ideally, show sensitivity to a lower and higher prior.

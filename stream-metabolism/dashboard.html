@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache la Poudre stream metabolism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0F2530; --muted:#587079; --faint:#8AA0A7; --mist:#F2F6F6; --surface:#FFFFFF; --line:#D8E1E3; --line2:#E8EEEF;
+  --deep:#082A33; --canyon:#0D5C6E; --glacier:#46A7D4;
+  --gpp:#2F9E6B; --er:#7B4FA3; --flow:#2C7DB8; --precip:#9CC3E3; --visit:#E3A62A;
+  --ok:#2F9E6B; --warn:#C98A0B; --bad:#C5473A;
+  --display:'Bricolage Grotesque','Avenir Next','Segoe UI',system-ui,sans-serif;
+  --body:'Instrument Sans','Avenir Next','Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;background:var(--mist);color:var(--ink);font:16px/1.55 var(--body);-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--display);line-height:1.15;margin:0;letter-spacing:-.01em;color:var(--ink)}
+p{margin:0 0 .9em}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--glacier);outline-offset:2px;border-radius:4px}
+.num{font-variant-numeric:tabular-nums}
+.sr{position:absolute;left:-9999px}
+a{color:var(--canyon)}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:24px;padding:0 28px;height:58px}
+.brand{font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:-.02em;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.brand svg{flex:none}
+.brand small{font:500 13px var(--body);color:var(--muted);letter-spacing:0}
+.tabs{display:flex;gap:4px;margin-left:auto}
+.tabs button{border:0;background:none;padding:9px 16px;border-radius:999px;font-weight:600;color:var(--muted);cursor:pointer}
+.tabs button[aria-selected=true]{background:var(--ink);color:#fff}
+.tabs button:hover:not([aria-selected=true]){background:var(--line2)}
+.demo{background:#FFF3D6;border-bottom:1px solid #F0D58A;color:#6b4a00;text-align:center;padding:9px 20px;font-size:14px}
+.demo b{font-weight:700}
+
+/* hero */
+.hero{position:relative;background:linear-gradient(180deg,#082A33 0%,#0B3A47 100%);color:#fff;overflow:hidden}
+.hero .contours{position:absolute;inset:0;width:100%;height:100%;opacity:.22;pointer-events:none}
+.hero-in{position:relative;max-width:1240px;margin:0 auto;padding:56px 28px 36px}
+.hero h1{color:#fff;font-size:clamp(34px,5.2vw,60px);font-weight:700;max-width:16ch}
+.hero .lede{font-size:clamp(17px,2vw,20px);max-width:56ch;color:#CFE3E8;margin:18px 0 28px}
+.hero-controls{display:flex;flex-wrap:wrap;gap:14px 28px;align-items:center;margin-bottom:6px}
+.seg{display:inline-flex;background:rgba(255,255,255,.1);border-radius:999px;padding:3px}
+.seg button{border:0;background:none;color:#CFE3E8;padding:8px 15px;border-radius:999px;font-weight:600;cursor:pointer;font-size:14px}
+.seg button[aria-pressed=true]{background:#fff;color:var(--deep)}
+.lbl{font-size:13px;color:#9FC0C9;margin-right:8px}
+.hero select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:7px 10px}
+.hero select option{color:#000}
+.months{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:14px 0 4px}
+.months button{border:1px solid rgba(255,255,255,.28);background:none;color:#DDEBEE;border-radius:999px;padding:5px 13px;cursor:pointer;font-weight:600;font-size:14px}
+.months button[aria-pressed=true]{background:var(--glacier);border-color:var(--glacier);color:var(--deep)}
+.months .play{background:#fff;color:var(--deep);border-color:#fff}
+#ribbon{width:100%;display:block;margin-top:6px}
+.ribbon-note{font-size:14px;color:#A9C6CE;max-width:78ch;margin:6px 0 0}
+.side{display:flex;flex-wrap:wrap;gap:14px 26px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.15)}
+.side .t{font-size:13px;color:#9FC0C9;margin-right:4px}
+.sbead{display:flex;align-items:center;gap:9px;cursor:default}
+.sbead i{width:26px;height:26px;border-radius:50%;border:2px solid #fff;display:block}
+.sbead span{font-size:13px;color:#DDEBEE;line-height:1.2} .sbead b{display:block;font-size:15px;color:#fff}
+
+/* public sections */
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+.sec{padding:72px 0 8px}
+.sec h2{font-size:clamp(26px,3.4vw,38px);font-weight:700;margin-bottom:12px;max-width:22ch}
+.sec .intro{font-size:18px;color:var(--muted);max-width:62ch;margin-bottom:34px}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--line)}
+.three>div{padding:26px 28px 8px 0;border-right:1px solid var(--line);margin-right:28px}
+.three>div:last-child{border-right:0;margin-right:0}
+.three h3{font-size:22px;margin:8px 0 8px;display:flex;align-items:center;gap:10px}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;flex:none}
+.three p{color:var(--muted);max-width:34ch}
+.three .typ{font:500 14px var(--body);color:var(--ink);background:var(--line2);display:inline-block;padding:5px 11px;border-radius:6px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px}
+.chips .grp{flex-basis:100%;font-size:13px;color:var(--muted);margin-top:8px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;cursor:pointer;font-weight:600;font-size:14px}
+.chip[aria-pressed=true]{background:var(--canyon);border-color:var(--canyon);color:#fff}
+.chip.off{opacity:.5}
+.site-head{margin:26px 0 8px;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px}
+.site-head h3{font-size:28px} .site-head span{color:var(--muted)}
+.site-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:36px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 18px 10px}
+.panel h4{font-size:17px;margin-bottom:2px} .panel .sub{font-size:14px;color:var(--muted);margin-bottom:6px}
+.facts{list-style:none;padding:0;margin:0}
+.facts li{padding:14px 0;border-bottom:1px solid var(--line2)} .facts li:first-child{padding-top:0}
+.facts b{display:block;font-family:var(--display);font-size:17px;margin-bottom:2px}
+.facts span{color:var(--muted);font-size:15px}
+.facts .badge,.badge{color:#fff!important;display:inline-block;font-size:13px;font-weight:600;padding:3px 10px;border-radius:999px;color:#fff;vertical-align:1px}
+.meter{height:10px;border-radius:99px;background:linear-gradient(90deg,var(--er),#D9D3E6 50%,var(--gpp));position:relative;margin:12px 0 6px}
+.meter i{position:absolute;top:-5px;width:6px;height:20px;border-radius:3px;background:var(--ink);transform:translateX(-3px)}
+.meter-l{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.guide{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:6px}
+.guide h3{font-size:19px;margin-bottom:6px} .guide p{color:var(--muted);font-size:15px}
+.guide .bar{height:6px;border-radius:99px;margin-bottom:14px}
+.caution{margin-top:34px;padding:20px 24px;background:#E6EFF1;border-left:4px solid var(--canyon);border-radius:0 10px 10px 0;max-width:80ch;font-size:15px}
+.glossary dl{display:grid;grid-template-columns:200px 1fr;gap:10px 24px;margin:0;max-width:860px}
+.glossary dt{font-weight:700} .glossary dd{margin:0;color:var(--muted)}
+footer{margin-top:80px;padding:34px 0 50px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 40px;justify-content:space-between}
+
+/* research layout */
+.r-layout{display:grid;grid-template-columns:288px minmax(0,1fr);gap:0;max-width:1760px;margin:0 auto}
+.rail{position:sticky;top:58px;align-self:start;height:calc(100vh - 58px);overflow:auto;border-right:1px solid var(--line);background:var(--surface);padding:18px 18px 40px}
+.rail h4{font-size:13px;font-family:var(--body);font-weight:700;color:var(--muted);margin:20px 0 8px;letter-spacing:0}
+.rail h4:first-child{margin-top:0}
+.rail .mini{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 11px;cursor:pointer;font-weight:600;font-size:13px}
+.btn:hover{background:var(--line2)} .btn.pri{background:var(--canyon);border-color:var(--canyon);color:#fff} .btn.pri:hover{background:#0a4b5a}
+.btn.warn{color:var(--bad)}
+.sitelist label{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:14px;cursor:pointer}
+.sitelist .g{font-size:12px;color:var(--muted);margin:10px 0 2px;font-weight:600}
+.sitelist .sw{width:10px;height:10px;border-radius:50%;flex:none}
+.sitelist small{color:var(--faint);margin-left:auto}
+.rail .chips .chip{padding:4px 10px;font-size:13px}
+.rail select,.rail input[type=text]{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:#fff}
+.rail .chk{display:flex;gap:8px;align-items:flex-start;font-size:14px;margin:6px 0;cursor:pointer}
+.r-main{padding:22px 30px 60px;min-width:0}
+.rtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:22px;flex-wrap:wrap}
+.rtabs button{border:0;background:none;padding:11px 16px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
+.rtabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--canyon)}
+.ctl{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:center;margin-bottom:16px;font-size:14px}
+.ctl label{display:flex;align-items:center;gap:7px}
+.ctl select{border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff}
+.ctl .seg{background:var(--line2)} .ctl .seg button{color:var(--muted);font-size:13px;padding:6px 12px} .ctl .seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px}
+.grid2.wide{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}
+.r-main .panel{margin-bottom:22px}
+.scroll-x{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;font-weight:700;color:var(--muted);font-size:12.5px;padding:8px 10px;border-bottom:2px solid var(--line);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}
+tr.click{cursor:pointer} tr.click:hover td{background:var(--mist)}
+td.r,th.r{text-align:right}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;color:#fff}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.note{font-size:13.5px;color:var(--muted);margin:6px 2px 0;max-width:90ch}
+
+/* visits */
+.visit-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-bottom:22px}
+.vc{border:1px solid var(--line);background:#fff;border-radius:10px;padding:12px 14px;border-left:5px solid var(--ok);cursor:pointer}
+.vc.warn{border-left-color:var(--warn)} .vc.bad{border-left-color:var(--bad)} .vc.none{border-left-color:var(--faint)}
+.vc b{font-family:var(--display);font-size:16px;display:block} .vc small{color:var(--muted);display:block;font-size:13px}
+.vc .d{font-size:22px;font-weight:700;font-family:var(--display);margin-top:4px}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px 16px;align-items:end}
+.form label{font-size:13px;font-weight:600;color:var(--muted);display:block}
+.form input,.form select,.form textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;margin-top:4px;font-weight:400;color:var(--ink)}
+.form .full{grid-column:1/-1}
+.types{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.types label{display:flex;gap:6px;align-items:center;font-weight:500;color:var(--ink);background:var(--line2);padding:5px 10px;border-radius:99px;cursor:pointer;font-size:13px}
+.types input{width:auto;margin:0}
+#tip{position:fixed;z-index:200;pointer-events:none;background:var(--ink);color:#fff;padding:9px 12px;border-radius:8px;font-size:13px;line-height:1.4;max-width:300px;opacity:0;transition:opacity .08s;box-shadow:0 6px 24px rgba(8,42,51,.3)}
+#tip b{font-family:var(--display);font-size:14px;display:block;margin-bottom:2px}
+.tt-row{display:flex;gap:8px;align-items:center;justify-content:space-between} .tt-row i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+svg text{font-family:var(--body)}
+.axis text{fill:var(--muted);font-size:12px} .axis .domain{stroke:var(--line)} .axis line{stroke:var(--line)}
+.grid line{stroke:var(--line2)} .grid .domain{display:none}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted);margin:2px 0 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.legend span{display:inline-flex;align-items:center}
+@media (max-width:1000px){
+  .r-layout{grid-template-columns:1fr} .rail{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .site-grid,.three,.guide,.grid2,.grid2.wide{grid-template-columns:minmax(0,1fr)}
+  .three>div{border-right:0;margin-right:0;border-bottom:1px solid var(--line);padding-bottom:22px}
+  .top{padding:0 14px;gap:10px} .brand small{display:none}
+  .brand{font-size:16px;gap:6px;min-width:0} .tabs button{padding:8px 11px;font-size:13px;white-space:nowrap} .r-main{padding:18px 14px}
+  .glossary dl{grid-template-columns:1fr}
+}
+@media (max-width:480px){ .brand>span{display:none} .ctl label{max-width:100%;flex-wrap:wrap} .ctl select{max-width:100%;min-width:0} }
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand" aria-label="Cache la Poudre stream metabolism">
+    <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><path d="M2 20c4-9 7-9 10-3s6 4 9-6 5-3 7 1" fill="none" stroke="#0D5C6E" stroke-width="3" stroke-linecap="round"/><path d="M2 26c4-5 7-5 10-2s6 2 9-3 5-2 7 0" fill="none" stroke="#46A7D4" stroke-width="3" stroke-linecap="round"/></svg>
+    <span>Poudre metabolism <small>Cache la Poudre River sondes</small></span>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Dashboard views">
+    <button role="tab" id="tab-public" aria-selected="true" aria-controls="page-public">River overview</button>
+    <button role="tab" id="tab-research" aria-selected="false" aria-controls="page-research">Research view</button>
+  </nav>
+</header>
+<div id="demo-banner" class="demo" hidden><b>Sample data.</b> These numbers are made up so you can preview the layout. Run the R workflow and put <code>dashboard_data/data.js</code> next to this file to see your own results.</div>
+
+<main id="page-public" role="tabpanel" aria-labelledby="tab-public">
+  <section class="hero">
+    <svg class="contours" id="contours" aria-hidden="true" preserveAspectRatio="xMidYMid slice"></svg>
+    <div class="hero-in">
+      <h1>How the Cache la Poudre breathes</h1>
+      <p class="lede">Sensors in the river record oxygen every 15 minutes. From those readings we can tell how much life the stream makes and uses each day, from the mountains to the plains.</p>
+      <div class="hero-controls">
+        <div><span class="lbl">Show</span><span class="seg" id="metric-seg" role="group" aria-label="What to show">
+          <button data-m="GPP" aria-pressed="true">Oxygen made</button><button data-m="ER" aria-pressed="false">Oxygen used</button><button data-m="NEP" aria-pressed="false">Net balance</button></span></div>
+        <div><label class="lbl" for="year-sel">Year</label><select id="year-sel"></select></div>
+      </div>
+      <div class="months" id="months" role="group" aria-label="Month"></div>
+      <svg id="ribbon" role="img" aria-label="River profile from the headwaters downstream, with each site shown as a circle"></svg>
+      <p class="ribbon-note" id="ribbon-note"></p>
+      <div class="side" id="side"></div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <section class="sec">
+      <h2>Three ideas describe a stream's metabolism</h2>
+      <p class="intro">Like a body, a river takes in energy and spends it. Oxygen in the water lets us measure both sides, every day, without disturbing the stream.</p>
+      <div class="three">
+        <div><span class="typ" id="typ-gpp"></span><h3><i class="dot" style="background:var(--gpp)"></i>Making</h3><p>Algae and water plants use sunlight to build food and release oxygen. Scientists call this gross primary production, or GPP. It rises on sunny days and drops when floods scour the riverbed.</p></div>
+        <div><span class="typ" id="typ-er"></span><h3><i class="dot" style="background:var(--er)"></i>Using</h3><p>Microbes, insects, fish and plants all breathe, using up oxygen. This is ecosystem respiration, or ER. Warm water and plenty of fallen leaves speed it up.</p></div>
+        <div><span class="typ" id="typ-nep"></span><h3><i class="dot" style="background:var(--canyon)"></i>Balance</h3><p>Making minus using is the net balance (NEP). When a stream makes more than it uses, it grows its own food. When it uses more, it depends on leaves and organic matter washing in.</p></div>
+      </div>
+    </section>
+
+    <section class="sec" id="explore">
+      <h2>Look closely at one place</h2>
+      <p class="intro">Pick a site to see how its stream makes and uses oxygen through the season, and how that changes from year to year.</p>
+      <div class="chips" id="site-chips" role="group" aria-label="Choose a site"></div>
+      <div id="site-view"></div>
+    </section>
+
+    <section class="sec">
+      <h2>What this can say about river health</h2>
+      <p class="intro">Metabolism is one clue about how a river is working. It is most useful when read together with water quality, flow and what lives in the stream.</p>
+      <div class="guide">
+        <div><div class="bar" style="background:var(--gpp)"></div><h3>Makes more than it uses</h3><p>A lot of algae are growing, usually in sunny, open, nutrient-rich water. Some of this is natural. Very high production can swing oxygen sharply between day and night, which stresses fish and insects.</p></div>
+        <div><div class="bar" style="background:linear-gradient(90deg,var(--er),var(--gpp))"></div><h3>Close to balanced</h3><p>Food made in the stream roughly matches what the stream consumes. Many healthy rivers sit here in summer and shift with the seasons, with production peaking in the long days after spring floods.</p></div>
+        <div><div class="bar" style="background:var(--er)"></div><h3>Uses more than it makes</h3><p>The stream runs on food from outside, such as leaves, soil and upstream inputs. That is normal in shaded mountain reaches. In town it can also point to extra organic material, so we compare it with nearby sites.</p></div>
+      </div>
+      <div class="caution"><b>Read with care.</b> These are estimates from a computer model of oxygen swings, not direct counts. They are least certain in fast, steep, bubbly water, where oxygen exchanges with the air so quickly that the signal is faint. A site's number alone is not a grade for the river.</div>
+    </section>
+
+    <section class="sec glossary">
+      <h2>Words used here</h2>
+      <dl>
+        <dt>g O₂ per m² per day</dt><dd>Grams of oxygen made or used per square metre of riverbed in one day. It lets different sites be compared fairly.</dd>
+        <dt>GPP</dt><dd>Gross primary production: oxygen made by algae and plants.</dd>
+        <dt>ER</dt><dd>Ecosystem respiration: oxygen used by everything living in the stream. Shown as a positive amount in the public view.</dd>
+        <dt>NEP</dt><dd>Net ecosystem production: oxygen made minus oxygen used.</dd>
+        <dt>Production-to-respiration ratio</dt><dd>Oxygen made divided by oxygen used. Above 1 means the stream makes more than it uses.</dd>
+        <dt>Sonde</dt><dd>A sensor package left in the river to measure oxygen, temperature, depth and more.</dd>
+      </dl>
+    </section>
+  </div>
+  <footer><div class="wrap"><div id="foot-data"></div><div>Estimates are modeled from continuous sonde data. Sondes are pulled in winter, so there are no estimates from about November to March.</div></div></footer>
+</main>
+
+<main id="page-research" role="tabpanel" aria-labelledby="tab-research" hidden>
+  <div class="r-layout">
+    <aside class="rail" id="rail" aria-label="Filters"></aside>
+    <div class="r-main">
+      <div class="rtabs" role="tablist" id="rtabs"></div>
+      <div id="rview"></div>
+    </div>
+  </div>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="dashboard_data/data.js"></script>
+<script>
+/* ---------- Sample data (synthetic). Only used when dashboard_data/data.js is missing. ---------- */
+function makeDemoData() {
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+  const rnd = mulberry32(20261029);
+  const gauss = () => { let u=0,v=0; while(!u)u=rnd(); while(!v)v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+  const S = [
+    // id,label,group,lat,lon,elev,desc,conf,K600,sdlog,gppBase,erBase,yearsFrom
+    ['chd','CHD','Poudre mainstem',40.6017611,-105.8420278,2795,'Chambers Lake Outflow','direct',191,0.5,2.2,3.0,2019],
+    ['pfal','PFAL','Poudre mainstem',40.651595,-105.810709,2740,'Hwy 14 bridge downstream of Poudre Falls','manual assumption',110,0.5,2.6,3.4,2020],
+    ['pbr','PBR','Poudre mainstem',40.700221,-105.544028,2200,'Poudre below Rustic','proxy',67,0.3,3.5,4.4,2019],
+    ['pbd','PBD','Poudre mainstem',40.664519,-105.22419,1671,'Downstream of the confluence of the North Fork and mainstem of the CLP','direct',58,0.3,4.6,5.8,2019],
+    ['bellvue','BELLVUE','Poudre mainstem',40.627868,-105.164528,1600,'Upstream of City of Fort Collins on Tamasag property','proxy',83,0.3,5.2,6.2,2019],
+    ['salyer','SALYER','Poudre mainstem',40.60054584,-105.08604,1540,'Poudre at Legacy Bridge in Slayer Natural Area','proxy',25,0.3,6.5,7.4,2019],
+    ['udall','UDALL','Poudre mainstem',40.588073,-105.069231,1513,'Poudre at Lincoln St above Lincoln St Outflow','direct',19,0.25,7.2,8.4,2019],
+    ['riverbend','RIVERBEND','Poudre mainstem',40.575,-105.033,1505,'Poudre at Timberline below Dry Creek','proxy',17,0.3,8.6,9.6,2019],
+    ['cottonwood','COTTONWOOD','Poudre mainstem',40.56703363,-105.0272535,1500,'Poudre below Spring Creek at Prospect','proxy',33,0.3,9.8,10.4,2019],
+    ['elc','ELC','Poudre mainstem',40.550674,-105.008111,1490,'Poudre above Boxelder Sanitation, formerly ELC','direct',15,0.25,10.5,11.2,2019],
+    ['archery','ARCHERY','Poudre mainstem',40.547903,-105.001105,1485,'Poudre below Boxelder Sanitation at Archery Range','proxy',5,0.4,11.5,13.6,2020],
+    ['riverbluffs','RIVERBLUFFS','Poudre mainstem',40.486145,-104.961921,1440,'Poudre below Fossil Creek Reservoir','direct',14,0.25,9.0,10.8,2019],
+    ['joei','JOEI','Tributary',40.540819,-105.881445,2950,'Above Joe Wright Reservoir','direct',87,0.4,1.8,2.6,2022],
+    ['cbri','CBRI','Tributary',40.577997,-105.857219,2800,'Below Joe Wright Reservoir','direct',173,0.5,2.4,3.2,2020],
+    ['sfm','SFM','Tributary',40.618203,-105.525477,2300,'The South Fork of the CLP at Pingree Park road','manual assumption',15,0.6,3.2,3.8,2021]
+  ].map((a,i)=>({site:a[0],site_label:a[1],group:a[2],lat:a[3],lon:a[4],elev_m:a[5],description:a[6],flow_confidence:a[7],K600_prior:a[8],K600_sdlog:a[9],order:i+1,gb:a[10],eb:a[11],from:a[12]}));
+  const years=[2019,2020,2021,2022,2023,2024,2025];
+  const wet={2019:1.35,2020:0.8,2021:0.7,2022:0.9,2023:1.5,2024:1.0,2025:0.75};
+  const day=864e5, iso=t=>new Date(t).toISOString().slice(0,10);
+  const daily={site:[],date:[],GPP:[],ER:[],NEP:[],PR:[],K600:[],qc_pass:[]};
+  const cov={site:[],date:[],temp_c:[],spc_uscm:[],turb_ntu:[],ph:[],chla_rfu:[],fdom_rfu:[],depth_m:[],par_mean:[]};
+  const flow={site:[],date:[],q_cms:[]};
+  const precipByDate={};
+  const visits={id:[],site:[],date:[],type:[],tech:[],notes:[],issue:[]};
+  // precip (basin-wide)
+  years.forEach(y=>{ for(let t=Date.UTC(y,2,1); t<=Date.UTC(y,10,30); t+=day){ const m=new Date(t).getUTCMonth(); const p = (m>=5&&m<=8)?0.22:0.1; if(rnd()<p) precipByDate[iso(t)] = Math.round((-Math.log(1-rnd())*7)*10)/10; } });
+  S.forEach((s,si)=>{
+    const qBase = s.group==='Tributary' ? 0.5 : 2.5 + si*0.6;
+    years.filter(y=>y>=s.from).forEach(y=>{
+      if (s.site==='udall' && y===2021) { /* gap year */ }
+      const start=Date.UTC(y,2,18+Math.floor(rnd()*14)), end=Date.UTC(y,10,2+Math.floor(rnd()*12));
+      let lastVisit=start;
+      visits.id.push('demo-'+s.site+'-'+y+'-d'); visits.site.push(s.site); visits.date.push(iso(start)); visits.type.push('Sonde deployed'); visits.tech.push(['MR','JT','AL'][Math.floor(rnd()*3)]); visits.notes.push('Spring deployment, calibrated before install.'); visits.issue.push(false);
+      for(let t=start;t<=end;t+=day){
+        const dt=new Date(t), doy=(t-Date.UTC(y,0,0))/day;
+        const snow=Math.exp(-Math.pow((doy-155)/28,2))*wet[y];
+        const q=Math.max(0.05,(qBase*(0.35+3.4*snow)*(0.9+0.2*rnd())));
+        const light=Math.max(0.12,Math.sin(Math.PI*(doy-60)/245));
+        const temp=3+15*Math.sin(Math.PI*(doy-70)/240)*(s.elev_m>2500?0.7:1)+gauss()*0.8;
+        const scour=1/(1+Math.pow(q/(qBase*2.6),2));
+        const cloud=0.75+0.25*rnd();
+        let gpp=Math.max(0.05,s.gb*light*light*scour*cloud*(0.8+0.4*wet[y]*0.0+0.2*gauss()*0.2+0.2)+gauss()*s.gb*0.06);
+        let er=-(s.eb*(0.45+0.9*(temp/18))*(0.8+0.2*scour)+0.25*gpp+gauss()*s.eb*0.07);
+        const dailyKept = rnd()>0.07;
+        if(!dailyKept){ if(rnd()<0.5) gpp=-gpp*0.2; else er=Math.abs(er)*0.3; }
+        const pass = gpp>0&&er<0;
+        daily.site.push(s.site); daily.date.push(iso(t)); daily.GPP.push(+gpp.toFixed(3)); daily.ER.push(+er.toFixed(3));
+        daily.NEP.push(+(gpp+er).toFixed(3)); daily.PR.push(+(gpp/Math.abs(er)).toFixed(3)); daily.K600.push(+(s.K600_prior*Math.exp(gauss()*s.K600_sdlog*0.6)).toFixed(2)); daily.qc_pass.push(pass);
+        cov.site.push(s.site); cov.date.push(iso(t)); cov.temp_c.push(+temp.toFixed(2)); cov.spc_uscm.push(+(260/(0.6+q/qBase)+gauss()*8).toFixed(1));
+        cov.turb_ntu.push(+(Math.max(0.5,2+q*3+gauss()*2)).toFixed(2)); cov.ph.push(+(8.0+gauss()*0.12-0.05*q/qBase).toFixed(2));
+        cov.chla_rfu.push(y>=2020?+(Math.max(0.1,0.6+gpp*0.12+gauss()*0.15)).toFixed(2):null);
+        cov.fdom_rfu.push(y>=2020?+(Math.max(0.1,3+q*0.8+gauss()*0.5)).toFixed(2):null);
+        cov.depth_m.push(+(0.25+0.18*Math.pow(q,0.3)+gauss()*0.01).toFixed(3)); cov.par_mean.push(+(light*620+gauss()*30).toFixed(1));
+        flow.site.push(s.site); flow.date.push(iso(t)); flow.q_cms.push(+q.toFixed(3));
+        if(t-lastVisit>day*(18+rnd()*10) && t<end-10*day){ lastVisit=t;
+          const types=['Data download','Calibration','Cleaning','Calibration']; const ty=types[Math.floor(rnd()*types.length)];
+          visits.id.push('demo-'+s.site+'-'+iso(t)); visits.site.push(s.site); visits.date.push(iso(t)); visits.type.push(ty); visits.tech.push(['MR','JT','AL'][Math.floor(rnd()*3)]);
+          const iss=rnd()<0.1; visits.notes.push(iss?'Heavy algae on the optical sensors; cleaned and recalibrated.':'Routine visit, no problems.'); visits.issue.push(iss);
+        }
+      }
+      visits.id.push('demo-'+s.site+'-'+y+'-p'); visits.site.push(s.site); visits.date.push(iso(end+day)); visits.type.push('Sonde pulled'); visits.tech.push(['MR','JT','AL'][Math.floor(rnd()*3)]); visits.notes.push('Winter removal.'); visits.issue.push(false);
+    });
+  });
+  // coverage by month
+  const covCount={}; daily.site.forEach((s,i)=>{ const k=s+'|'+daily.date[i].slice(0,7)+'-01'; covCount[k]=(covCount[k]||0)+1; });
+  const coverage={site:[],month:[],days:[]}; Object.keys(covCount).forEach(k=>{const [s,m]=k.split('|'); coverage.site.push(s); coverage.month.push(m); coverage.days.push(covCount[k]);});
+  const drivers=[['Day of year',30],['Water temperature',22],['Light (PAR)',16],['Depth (stage proxy)',12],['Turbidity',7],['Specific conductivity',5],['Chl-a fluorescence',4],['fDOM fluorescence',2],['pH',2]];
+  const importance={response:[],driver:[],pct:[]}; ['GPP','|ER|'].forEach(r=>drivers.forEach(([d,p],i)=>{importance.response.push(r);importance.driver.push(d);importance.pct.push(+(p*(0.8+0.4*rnd())).toFixed(1));}));
+  const pDates=Object.keys(precipByDate).sort();
+  const sitesOut={}; ['site','site_label','group','lat','lon','elev_m','description','flow_confidence','K600_prior','K600_sdlog','order'].forEach(k=>sitesOut[k]=S.map(s=>s[k]));
+  return { demo:true, generated:'sample', model:'sample data', sites:sitesOut, daily, covars:cov, flow, precip:{date:pDates,precip_mm:pDates.map(d=>precipByDate[d])}, coverage, importance, visits };
+}
+
+/* ================= core: data, helpers, charts ================= */
+const $=(s,el=document)=>el.querySelector(s), $$=(s,el=document)=>[...el.querySelectorAll(s)];
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const C={gpp:'#2F9E6B',er:'#7B4FA3',flow:'#2C7DB8',precip:'#9CC3E3',visit:'#E3A62A',ink:'#0F2530',muted:'#587079',line:'#D8E1E3',bad:'#C5473A',ok:'#2F9E6B',warn:'#C98A0B'};
+const SITE_PAL=['#0D5C6E','#E3A62A','#7B4FA3','#2F9E6B','#C5473A','#46A7D4','#8C6D31','#D6609C','#5B6AC4','#7A9A2B','#B35C1E','#2A9D9D','#9A3B6B','#4A7A3C','#6C757D','#A33B20','#3E6FA3','#C28F00'];
+const f1=d3.format(',.1f'), f2=d3.format(',.2f'), f0=d3.format(',.0f');
+const nn=v=>(v==null||v===''||isNaN(+v))?NaN:+v;
+const isNum=v=>typeof v==='number'&&isFinite(v);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const RAW=window.RIVER_DATA||makeDemoData();
+const DEMO=!!RAW.demo;
+function rowsOf(c){ if(!c) return []; const ks=Object.keys(c); if(!ks.length) return []; const n=(c[ks[0]]||[]).length; const out=new Array(n); for(let i=0;i<n;i++){const o={}; for(const k of ks) o[k]=c[k][i]; out[i]=o;} return out; }
+
+/* --- sites --- */
+const SITES=rowsOf(RAW.sites).map(s=>({id:s.site,label:s.site_label||String(s.site).toUpperCase(),group:s.group||'Other',lat:nn(s.lat),lon:nn(s.lon),elev:nn(s.elev_m),order:nn(s.order)||999,
+  desc:(s.description||'').replace(/\s+/g,' ').trim(),conf:s.flow_confidence||'unknown',K600:nn(s.K600_prior),sdlog:nn(s.K600_sdlog)})).sort((a,b)=>a.order-b.order);
+SITES.forEach((s,i)=>s.color=SITE_PAL[i%SITE_PAL.length]);
+const SITE=Object.fromEntries(SITES.map(s=>[s.id,s]));
+const isMain=s=>/mainstem/i.test(s.group);
+
+/* --- daily metabolism --- */
+const DAILY=rowsOf(RAW.daily).filter(d=>SITE[d.site]).map(d=>{
+  const t=Date.parse(d.date+'T12:00:00Z'), dt=new Date(t);
+  const GPP=nn(d.GPP), ER=nn(d.ER);
+  return {site:d.site,date:d.date,t,year:dt.getUTCFullYear(),month:dt.getUTCMonth()+1,GPP,ER,ERm:-ER,NEP:nn(d.NEP),PR:nn(d.PR),K600:nn(d.K600),
+    pass:(d.qc_pass===true||d.qc_pass===1||d.qc_pass==='TRUE'||d.qc_pass==='true')};
+}).sort((a,b)=>a.t-b.t);
+const BY_SITE=d3.group(DAILY,d=>d.site);
+const YEARS=[...new Set(DAILY.map(d=>d.year))].sort();
+const MONTHS_PRESENT=[...new Set(DAILY.map(d=>d.month))].sort((a,b)=>a-b);
+const HAS_DATA=DAILY.length>0;
+
+/* --- covariates, flow, precip --- */
+const COV=new Map(); rowsOf(RAW.covars).forEach(r=>COV.set(r.site+'|'+r.date,r));
+const FLOW=new Map(); d3.group(rowsOf(RAW.flow),r=>r.site).forEach((v,k)=>FLOW.set(k,v.map(r=>({t:Date.parse(r.date+'T12:00:00Z'),y:nn(r.q_cms)})).sort((a,b)=>a.t-b.t)));
+const PRECIP=rowsOf(RAW.precip).map(r=>({t:Date.parse(r.date+'T12:00:00Z'),y:nn(r.precip_mm)})).sort((a,b)=>a.t-b.t);
+const HAS_FLOW=FLOW.size>0, HAS_PRECIP=PRECIP.length>0;
+const DRIVERS=[['par_mean','Light (PAR)'],['temp_c','Water temperature'],['depth_m','Depth (stage proxy)'],['spc_uscm','Specific conductivity'],['turb_ntu','Turbidity'],['ph','pH'],['orp_v','ORP'],['chla_rfu','Chl-a fluorescence'],['fdom_rfu','fDOM fluorescence']]
+  .filter(([k])=>RAW.covars&&RAW.covars[k]&&RAW.covars[k].some(v=>v!=null));
+const COVERAGE=rowsOf(RAW.coverage);
+const IMPORTANCE=rowsOf(RAW.importance);
+
+/* --- stats helpers --- */
+function ok(rows){ return rows.filter(d=>d.pass); }
+function stats(rows){
+  const r=rows.filter(d=>isNum(d.GPP)&&isNum(d.ER)); const n=r.length; if(!n) return {n:0,gpp:NaN,er:NaN,nep:NaN,pr:NaN,gppSd:NaN,erSd:NaN};
+  const g=d3.mean(r,d=>d.GPP), e=d3.mean(r,d=>d.ERm);
+  return {n,gpp:g,er:e,nep:g-e,pr:g/e,gppSd:d3.deviation(r,d=>d.GPP),erSd:d3.deviation(r,d=>d.ERm)};
+}
+function monthlyMeans(rows,key){ return d3.rollup(rows,v=>d3.mean(v,d=>d[key]),d=>d.month); }
+function rolling(data,k){ // data sorted by x; window of k points, centred, restricted to run within gap
+  if(!k||k<2) return data; const out=[]; const gap=8*864e5;
+  for(let i=0;i<data.length;i++){ let s=0,c=0; for(let j=Math.max(0,i-Math.floor(k/2));j<=Math.min(data.length-1,i+Math.floor(k/2));j++){ if(Math.abs(data[j].x-data[i].x)<=k*864e5&&isNum(data[j].y)){s+=data[j].y;c++;} } out.push({x:data[i].x,y:c>=Math.max(2,Math.floor(k/3))?s/c:NaN}); }
+  return out;
+}
+function segments(data,gapDays=8){ const segs=[]; let cur=[]; for(const d of data){ if(!isNum(d.y)){ if(cur.length)segs.push(cur); cur=[]; continue;} if(cur.length&&d.x-cur[cur.length-1].x>gapDays*864e5){segs.push(cur);cur=[];} cur.push(d);} if(cur.length)segs.push(cur); return segs; }
+function spearman(xs,ys){ const n=xs.length; if(n<3) return NaN; const rk=a=>{const idx=a.map((v,i)=>[v,i]).sort((p,q)=>p[0]-q[0]); const r=new Array(n); let i=0; while(i<n){let j=i; while(j+1<n&&idx[j+1][0]===idx[i][0])j++; const av=(i+j)/2+1; for(let k=i;k<=j;k++)r[idx[k][1]]=av; i=j+1;} return r;}; const a=rk(xs),b=rk(ys); const ma=d3.mean(a),mb=d3.mean(b); let sab=0,saa=0,sbb=0; for(let i=0;i<n;i++){sab+=(a[i]-ma)*(b[i]-mb);saa+=(a[i]-ma)**2;sbb+=(b[i]-mb)**2;} return (saa&&sbb)?sab/Math.sqrt(saa*sbb):NaN; }
+function dl(name,text,mime='text/csv'){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type:mime+';charset=utf-8'})); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500); }
+function csvOf(rows,cols){ const q=v=>{v=v==null?'':String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}; return cols.join(',')+'\n'+rows.map(r=>cols.map(c=>q(r[c])).join(',')).join('\n'); }
+
+/* --- tooltip --- */
+const TIP=$('#tip');
+function tip(html,ev){ TIP.innerHTML=html; TIP.style.opacity=1; const r=TIP.getBoundingClientRect(); let x=ev.clientX+16,y=ev.clientY+14; if(x+r.width>innerWidth-8)x=ev.clientX-r.width-16; if(y+r.height>innerHeight-8)y=ev.clientY-r.height-14; TIP.style.left=Math.max(6,x)+'px'; TIP.style.top=Math.max(6,y)+'px'; }
+function untip(){ TIP.style.opacity=0; }
+function bindTip(sel,fn){ sel.on('mousemove',(ev,d)=>tip(fn(d),ev)).on('mouseleave',untip).on('focus',(ev,d)=>{const b=ev.target.getBoundingClientRect(); tip(fn(d),{clientX:b.right,clientY:b.top});}).on('blur',untip); }
+
+/* --- chart scaffolding --- */
+function mount(el,H,m){ el.innerHTML=''; const W=Math.max(280,el.clientWidth||640); const svg=d3.select(el).append('svg').attr('width',W).attr('height',H).attr('viewBox',`0 0 ${W} ${H}`).attr('role','img'); const g=svg.append('g').attr('transform',`translate(${m.l},${m.t})`); return {svg,g,w:Math.max(10,W-m.l-m.r),h:Math.max(10,H-m.t-m.b),W,H}; }
+function yAxis(g,y,w,label,fmt){ const grid=g.append('g').attr('class','grid').call(d3.axisLeft(y).ticks(5).tickSize(-w).tickFormat('')); const ax=g.append('g').attr('class','axis').call(d3.axisLeft(y).ticks(5).tickSizeOuter(0).tickFormat(fmt||(v=>d3.format('~g')(v)))); ax.select('.domain').remove(); if(label) g.append('text').attr('transform','rotate(-90)').attr('x',-y.range()[0]/2).attr('y',-g.node().__left+14||-40).attr('text-anchor','middle').attr('fill',C.muted).attr('font-size',12).text(label); }
+function xTime(g,x,h){ g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).ticks(Math.max(3,Math.floor(x.range()[1]/90))).tickSizeOuter(0)); }
+function legend(el,items){ const d=document.createElement('div'); d.className='legend'; d.innerHTML=items.map(i=>`<span><i style="background:${i.color}"></i>${esc(i.name)}</span>`).join(''); el.parentNode.insertBefore(d,el); return d; }
+function nodata(el,msg){ el.innerHTML=`<div class="empty">${esc(msg||'No data for this selection.')}</div>`; }
+
+/* line / dots / area chart with hover, optional brush */
+function lineChart(el,o){
+  const left=o.left||56, m={t:8,r:14,b:28,l:left}, H=o.h||240; const {svg,g,w,h}=mount(el,H,m); g.node().__left=left;
+  const x=d3.scaleUtc().domain(o.xDomain).range([0,w]);
+  const vals=o.series.flatMap(s=>s.data.filter(d=>isNum(d.y)&&d.x>=o.xDomain[0]&&d.x<=o.xDomain[1]).map(d=>d.y));
+  if(!vals.length&&!o.allowEmpty){ nodata(el,o.empty); return null; }
+  let lo=o.yDomain?o.yDomain[0]:d3.min(vals), hi=o.yDomain?o.yDomain[1]:d3.max(vals); if(lo==null){lo=0;hi=1;}
+  if(o.zero){lo=Math.min(lo,0);hi=Math.max(hi,0);} if(lo===hi){hi=lo+1;}
+  const y=d3.scaleLinear().domain([lo,hi]).nice().range([h,0]);
+  yAxis(g,y,w,o.yLabel,o.yFmt); xTime(g,x,h);
+  if(o.zero) g.append('line').attr('x1',0).attr('x2',w).attr('y1',y(0)).attr('y2',y(0)).attr('stroke',C.muted).attr('stroke-width',.8).attr('opacity',.6);
+  g.append('clipPath').attr('id',el.id+'-clip').append('rect').attr('width',w).attr('height',h+2).attr('y',-1);
+  const plot=g.append('g').attr('clip-path',`url(#${el.id}-clip)`);
+  if(o.under) o.under(plot,x,y,w,h);
+  for(const s of o.series){
+    const data=s.data.filter(d=>d.x>=o.xDomain[0]-9*864e5&&d.x<=+o.xDomain[1]+9*864e5);
+    if(s.mode==='dots'){ plot.selectAll(null).data(data.filter(d=>isNum(d.y))).join('circle').attr('cx',d=>x(d.x)).attr('cy',d=>y(d.y)).attr('r',s.r||2).attr('fill',s.color).attr('opacity',s.opacity||.35); continue; }
+    const segs=segments(data,o.gap||8);
+    for(const sg of segs){
+      if(s.mode==='area'){ plot.append('path').attr('d',d3.area().x(d=>x(d.x)).y0(y(0)).y1(d=>y(d.y)).curve(d3.curveMonotoneX)(sg)).attr('fill',s.color).attr('opacity',s.opacity||.18); }
+      plot.append('path').attr('d',d3.line().x(d=>x(d.x)).y(d=>y(d.y)).curve(s.step?d3.curveStepAfter:d3.curveMonotoneX)(sg)).attr('fill','none').attr('stroke',s.color).attr('stroke-width',s.width||1.8).attr('stroke-linejoin','round').attr('opacity',s.lineOpacity||1).attr('stroke-dasharray',s.dash||null);
+    }
+  }
+  if(o.over) o.over(plot,x,y,w,h);
+  const brushG=g.append('g').attr('class','brush');
+  if(o.onBrush){ const br=d3.brushX().extent([[0,0],[w,h]]).on('end',ev=>{ if(!ev.selection) return; const [a,b]=ev.selection.map(x.invert); brushG.call(br.move,null); if(b-a>2*864e5) o.onBrush([a,b]); }); brushG.call(br); brushG.select('.selection').attr('fill',C.glacier||'#46A7D4').attr('fill-opacity',.18).attr('stroke','#46A7D4'); }
+  else brushG.append('rect').attr('class','overlay').attr('width',w).attr('height',h).attr('fill','none').style('pointer-events','all');
+  const guide=g.append('line').attr('y1',0).attr('y2',h).attr('stroke',C.ink).attr('stroke-width',1).attr('opacity',0).style('pointer-events','none');
+  const bis=d3.bisector(d=>d.x).center;
+  brushG.on('mousemove.tip',ev=>{
+    const [mx]=d3.pointer(ev,g.node()); const xt=+x.invert(mx); let rowsHtml=''; let any=false;
+    for(const s of o.series){ if(s.noTip||!s.data.length) continue; const i=bis(s.data,xt); const d=s.data[i]; if(d&&Math.abs(d.x-xt)<=(o.hoverDays||4)*864e5&&isNum(d.y)){ any=true; rowsHtml+=`<div class="tt-row"><span><i style="background:${s.color}"></i>${esc(s.name)}</span><b class="num" style="display:inline;font-size:13px">${(s.fmt||f2)(d.y)}</b></div>`; } }
+    if(!any){untip();guide.attr('opacity',0);return;}
+    guide.attr('x1',mx).attr('x2',mx).attr('opacity',.35); tip(`<b>${d3.utcFormat('%b %-d, %Y')(new Date(xt))}</b>${rowsHtml}`,ev);
+  }).on('mouseleave.tip',()=>{untip();guide.attr('opacity',0);});
+  return {x,y,g,w,h};
+}
+
+/* box plots: groups x keys */
+function boxChart(el,o){
+  const H=o.h||320, m={t:10,r:10,b:36,l:54}; const bw=o.minBox||15; const need=o.groups.length*o.keys.length*bw+o.groups.length*18+m.l+m.r;
+  el.style.minWidth=''; const W0=el.clientWidth||640; const {svg,g,w,h}=mount(el,H,{...m}); 
+  let W=w; if(need>W0){ el.innerHTML=''; el.style.overflowX='auto'; const inner=document.createElement('div'); inner.style.width=need+'px'; el.appendChild(inner); const mm=mount(inner,H,m); return drawBox(mm,o,m); }
+  return drawBox({svg,g,w,h},o,m);
+}
+function drawBox({svg,g,w,h},o,m){
+  const vals=o.groups.flatMap(gr=>o.keys.flatMap(k=>gr.boxes[k]||[])); if(!vals.length){ svg.remove(); return null; }
+  const q=(a,p)=>d3.quantileSorted(a,p);
+  const lo=d3.min(vals), hi=d3.max(vals); const y=d3.scaleLinear().domain([Math.min(0,lo),Math.max(0,hi)]).nice().range([h,0]); g.node().__left=m.l; yAxis(g,y,w,o.yLabel);
+  const x0=d3.scaleBand().domain(o.groups.map(d=>d.label)).range([0,w]).paddingInner(.22).paddingOuter(.1);
+  const x1=d3.scaleBand().domain(o.keys).range([0,x0.bandwidth()]).padding(.12);
+  g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x0).tickSizeOuter(0));
+  if(y.domain()[0]<0) g.append('line').attr('x1',0).attr('x2',w).attr('y1',y(0)).attr('y2',y(0)).attr('stroke',C.muted).attr('opacity',.6);
+  for(const gr of o.groups) for(const k of o.keys){ const a=(gr.boxes[k]||[]).slice().sort(d3.ascending); if(a.length<3) continue;
+    const q1=q(a,.25),q2=q(a,.5),q3=q(a,.75),iqr=q3-q1,wl=d3.min(a.filter(v=>v>=q1-1.5*iqr)),wh=d3.max(a.filter(v=>v<=q3+1.5*iqr)),mean=d3.mean(a); const col=o.colorOf(k); const cx=x0(gr.label)+x1(k)+x1.bandwidth()/2, bw=x1.bandwidth();
+    const grp=g.append('g').attr('tabindex',0).style('cursor','default');
+    grp.append('line').attr('x1',cx).attr('x2',cx).attr('y1',y(wl)).attr('y2',y(wh)).attr('stroke',col).attr('stroke-width',1.2);
+    grp.append('rect').attr('x',cx-bw/2).attr('width',bw).attr('y',y(q3)).attr('height',Math.max(1,y(q1)-y(q3))).attr('fill',col).attr('fill-opacity',.28).attr('stroke',col).attr('rx',2);
+    grp.append('line').attr('x1',cx-bw/2).attr('x2',cx+bw/2).attr('y1',y(q2)).attr('y2',y(q2)).attr('stroke',col).attr('stroke-width',2.2);
+    grp.append('path').attr('d',d3.symbol(d3.symbolDiamond,26)()).attr('transform',`translate(${cx},${y(mean)})`).attr('fill','#fff').attr('stroke',C.ink).attr('stroke-width',1);
+    a.filter(v=>v<wl||v>wh).slice(0,40).forEach(v=>grp.append('circle').attr('cx',cx).attr('cy',y(v)).attr('r',1.6).attr('fill',col).attr('opacity',.5));
+    grp.on('mousemove',ev=>tip(`<b>${esc(o.nameOf?o.nameOf(k):k)} · ${esc(gr.label)}</b>n = ${a.length} days<br>median ${f2(q2)} · mean ${f2(mean)}<br>middle half ${f2(q1)} to ${f2(q3)}`,ev)).on('mouseleave',untip);
+  }
+  return {y};
+}
+
+/* scatter with nearest-point tooltip */
+function scatterChart(el,o){
+  const H=o.h||340, m={t:10,r:14,b:44,l:56}; const {svg,g,w,h}=mount(el,H,m); g.node().__left=m.l;
+  const pts=o.series.flatMap(s=>s.pts.map(p=>({...p,color:s.color,sname:s.name}))).filter(p=>isNum(p.x)&&isNum(p.y)); if(!pts.length){nodata(el,o.empty);return null;}
+  let xd=d3.extent(pts,p=>p.x), yd=d3.extent(pts,p=>p.y); if(o.equal){ const mx=Math.max(xd[1],yd[1]); xd=[Math.min(0,xd[0]),mx]; yd=[Math.min(0,yd[0]),mx]; }
+  const x=d3.scaleLinear().domain(xd).nice().range([0,w]), y=d3.scaleLinear().domain(yd).nice().range([h,0]);
+  yAxis(g,y,w,o.yLabel); const xa=g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).ticks(6).tickSizeOuter(0)); g.append('text').attr('x',w/2).attr('y',h+38).attr('text-anchor','middle').attr('fill',C.muted).attr('font-size',12).text(o.xLabel);
+  if(o.oneToOne){ const e=Math.min(x.domain()[1],y.domain()[1]); g.append('line').attr('x1',x(0)).attr('y1',y(0)).attr('x2',x(e)).attr('y2',y(e)).attr('stroke',C.ink).attr('stroke-dasharray','5 4').attr('opacity',.55); g.append('text').attr('x',x(e)-4).attr('y',y(e)-6).attr('text-anchor','end').attr('font-size',11).attr('fill',C.muted).text(o.oneLabel||'1:1'); }
+  g.selectAll('circle.p').data(pts).join('circle').attr('class','p').attr('cx',d=>x(d.x)).attr('cy',d=>y(d.y)).attr('r',o.r||2.6).attr('fill',d=>d.color).attr('opacity',.5);
+  const del=d3.Delaunay.from(pts,d=>x(d.x),d=>y(d.y)); const ring=g.append('circle').attr('r',6).attr('fill','none').attr('stroke',C.ink).attr('stroke-width',1.5).attr('opacity',0).style('pointer-events','none');
+  svg.on('mousemove',ev=>{ const [mx,my]=d3.pointer(ev,g.node()); if(mx<0||my<0||mx>w||my>h){untip();ring.attr('opacity',0);return;} const i=del.find(mx,my); const p=pts[i]; if(Math.hypot(x(p.x)-mx,y(p.y)-my)>22){untip();ring.attr('opacity',0);return;} ring.attr('cx',x(p.x)).attr('cy',y(p.y)).attr('opacity',1); tip(`<b>${esc(p.sname)}</b>${esc(p.label||'')}<br>${esc(o.xName||'x')}: ${f2(p.x)}<br>${esc(o.yName||'y')}: ${f2(p.y)}`,ev); }).on('mouseleave',()=>{untip();ring.attr('opacity',0);});
+  return {x,y,g};
+}
+
+/* heatmap: rows x cols */
+function heatmap(el,o){
+  const m={t:o.top||6,r:10,b:o.bottom||6,l:o.left||110}; const ch=o.cell||26; const H=o.rows.length*ch+m.t+m.b; const {svg,g,w,h}=mount(el,H,m);
+  const x=d3.scaleBand().domain(o.cols.map(c=>c.key)).range([0,w]).padding(.06), y=d3.scaleBand().domain(o.rows.map(r=>r.key)).range([0,h]).padding(.08);
+  const xa=g.append('g').attr('class','axis').attr('transform',o.xTop?'':`translate(0,${h})`).call(o.xTop?d3.axisTop(x).tickFormat(k=>o.cols.find(c=>c.key===k).label).tickSize(0):d3.axisBottom(x).tickFormat(k=>o.cols.find(c=>c.key===k).label).tickSize(0)); xa.select('.domain').remove(); if(o.rotate) xa.selectAll('text').attr('transform','rotate(-40)').style('text-anchor','end').attr('dx','-.4em');
+  const ya=g.append('g').attr('class','axis').call(d3.axisLeft(y).tickFormat(k=>o.rows.find(r=>r.key===k).label).tickSize(0)); ya.select('.domain').remove();
+  const cells=[]; o.rows.forEach(r=>o.cols.forEach(c=>cells.push({r,c,v:o.value(r.key,c.key)})));
+  const rect=g.selectAll('rect').data(cells).join('rect').attr('x',d=>x(d.c.key)).attr('y',d=>y(d.r.key)).attr('width',x.bandwidth()).attr('height',y.bandwidth()).attr('rx',3).attr('fill',d=>isNum(d.v)?o.color(d.v):'#EDF1F2');
+  if(o.text) g.selectAll('text.c').data(cells.filter(d=>isNum(d.v))).join('text').attr('class','c').attr('x',d=>x(d.c.key)+x.bandwidth()/2).attr('y',d=>y(d.r.key)+y.bandwidth()/2+4).attr('text-anchor','middle').attr('font-size',11).attr('fill',d=>o.textColor?o.textColor(d.v):C.ink).text(d=>o.text(d.v));
+  rect.on('mousemove',(ev,d)=>tip(o.tip?o.tip(d):`<b>${esc(d.r.label)} · ${esc(d.c.label)}</b>${isNum(d.v)?f2(d.v):'no data'}`,ev)).on('mouseleave',untip);
+  if(o.onClickRow) ya.selectAll('text').style('cursor','pointer').on('click',(ev,k)=>o.onClickRow(k));
+  return {g,x,y};
+}
+
+/* typographic punctuation helpers */
+const num1=v=>isNum(v)?f1(v):'–', num2=v=>isNum(v)?f2(v):'–';
+
+/* ================= public page ================= */
+const P={metric:'GPP',year:'all',month:'all',site:null,playing:null};
+const METRIC_LABEL={GPP:'Oxygen made',ER:'Oxygen used',NEP:'Net balance'};
+const UNIT='g O₂ per m² per day';
+const mainSites=SITES.filter(isMain), sideSites=SITES.filter(s=>!isMain(s));
+const MIN_ALL=15, MIN_SUB=5;
+const minN=()=>(P.month==='all'&&P.year==='all')?MIN_ALL:MIN_SUB;
+const passN=id=>(BY_SITE.get(id)||[]).filter(d=>d.pass).length;
+const hasData=s=>passN(s.id)>0;
+function siteRows(id,{year='all',month='all'}={}){ return (BY_SITE.get(id)||[]).filter(d=>d.pass&&(year==='all'||d.year===+year)&&(month==='all'||d.month===+month)); }
+function metricOf(st,m){ return m==='GPP'?st.gpp:m==='ER'?st.er:st.nep; }
+function friendly(s){ return s.desc||s.label; }
+
+/* contour lines for the hero background */
+(function(){ const svg=d3.select('#contours').attr('viewBox','0 0 1200 600'); const rnd=(a=>()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;})(11);
+  for(let i=0;i<16;i++){ const pts=[]; const y0=40+i*36; const ph=rnd()*6, amp=18+i*2.2; for(let x=0;x<=1200;x+=60) pts.push([x,y0+Math.sin(x/190+ph+i*.35)*amp+Math.sin(x/70+ph*2)*5]); svg.append('path').attr('d',d3.line().curve(d3.curveBasis)(pts)).attr('fill','none').attr('stroke','#9FD3E8').attr('stroke-width',1); } })();
+
+/* ---- scales ---- */
+function metricMax(m){ let mx=0; mainSites.concat(sideSites).forEach(s=>{ for(const mo of MONTHS_PRESENT){ const st=stats(siteRows(s.id,{month:mo})); if(st.n>=MIN_SUB) mx=Math.max(mx,Math.abs(metricOf(st,m))||0); } const st=stats(siteRows(s.id)); if(st.n>=MIN_ALL) mx=Math.max(mx,Math.abs(metricOf(st,m))||0); }); return mx||1; }
+function colorFor(m,mx){
+  if(m==='GPP') return v=>d3.interpolateRgb('#2A6B56','#8CF0B5')(Math.min(1,Math.abs(v)/mx));
+  if(m==='ER') return v=>d3.interpolateRgb('#5A4380','#CDB0F7')(Math.min(1,Math.abs(v)/mx));
+  return v=>{ const t=Math.max(-1,Math.min(1,v/mx)); return t>=0?d3.interpolateRgb('#D6E4E8','#7BE0A6')(t):d3.interpolateRgb('#D6E4E8','#C29BF0')(-t); };
+}
+function elevFill(list){ // elevations for ribbon height; interpolate gaps along order
+  const e=list.map(s=>isNum(s.elev)?s.elev:null); const known=e.map((v,i)=>v==null?null:i).filter(i=>i!=null);
+  if(known.length<2) return list.map((s,i)=>2900-i*(1500/Math.max(1,list.length-1)));
+  return e.map((v,i)=>{ if(v!=null) return v; let a=known.filter(k=>k<i).pop(), b=known.find(k=>k>i); if(a==null) return e[b]+ (b-i)*30; if(b==null) return e[a]-(i-a)*30; return e[a]+(e[b]-e[a])*(i-a)/(b-a); });
+}
+
+/* ---- ribbon ---- */
+let RB=null;
+function buildRibbon(){
+  const svgEl=$('#ribbon'); const W=Math.max(320,svgEl.parentNode.clientWidth); const H=W<640?300:330; const svg=d3.select(svgEl).attr('viewBox',`0 0 ${W} ${H}`).attr('width',W).attr('height',H); svg.selectAll('*').remove();
+  const list=mainSites; if(!list.length){ return; }
+  const padX=W<640?28:54, xs=list.map((_,i)=>list.length===1?W/2:padX+i*(W-2*padX)/(list.length-1));
+  let el=elevFill(list); for(let i=1;i<el.length;i++) if(el[i]>el[i-1]) el[i]=el[i-1]-5; const ye=d3.scaleLinear().domain([d3.max(el),d3.min(el)]).range([112,215]);
+  const pts=list.map((s,i)=>[xs[i],ye(el[i])]);
+  const defs=svg.append('defs'); const gr=defs.append('linearGradient').attr('id','wg').attr('x1',0).attr('x2',0).attr('y1',0).attr('y2',1); gr.append('stop').attr('offset','0%').attr('stop-color','#46A7D4').attr('stop-opacity',.38); gr.append('stop').attr('offset','100%').attr('stop-color','#46A7D4').attr('stop-opacity',0);
+  const base=H-62; const line=d3.line().curve(d3.curveMonotoneX);
+  svg.append('path').attr('d',d3.area().curve(d3.curveMonotoneX).x(d=>d[0]).y0(base).y1(d=>d[1])(pts)).attr('fill','url(#wg)');
+  const p=svg.append('path').attr('d',line(pts)).attr('fill','none').attr('stroke','#7CCBF0').attr('stroke-width',4).attr('stroke-linecap','round');
+  const L=p.node().getTotalLength(); if(!matchMedia('(prefers-reduced-motion: reduce)').matches){ p.attr('stroke-dasharray',L).attr('stroke-dashoffset',L).transition().duration(1800).ease(d3.easeCubicOut).attr('stroke-dashoffset',0); }
+  svg.append('text').attr('x',padX-20).attr('y',H-10).attr('fill','#9FC0C9').attr('font-size',12).text('Headwaters, high in the mountains');
+  svg.append('text').attr('x',W-padX+20).attr('y',H-10).attr('text-anchor','end').attr('fill','#9FC0C9').attr('font-size',12).text('Plains, downstream');
+  const beads=svg.selectAll('g.bead').data(list.map((s,i)=>({s,x:pts[i][0],y:pts[i][1]}))).join('g').attr('class','bead').attr('transform',d=>`translate(${d.x},${d.y})`).attr('tabindex',0).attr('role','img');
+  beads.append('line').attr('y1',0).attr('y2',d=>base-d.y+4).attr('stroke','#fff').attr('stroke-opacity',.14).attr('stroke-dasharray','2 4');
+  beads.append('circle').attr('class','c').attr('r',12).attr('stroke','#fff').attr('stroke-width',2);
+  beads.append('text').attr('class','v').attr('y',d=>-26).attr('text-anchor','middle').attr('fill','#fff').attr('font-size',14).attr('font-weight',700).attr('font-variant-numeric','tabular-nums');
+  beads.append('text').attr('class','n').attr('y',d=>base-d.y+22).attr('text-anchor','middle').attr('fill','#CFE3E8').attr('font-size',W<640?9.5:12).attr('font-weight',600).text(d=>d.s.label.length>9&&W<900?d.s.label.slice(0,8)+'…':d.s.label);
+  RB={svg,beads,list};
+}
+function updateRibbon(){
+  const m=P.metric, mx=metricMax(m), col=colorFor(m,mx);
+  const val=s=>{ const rows=siteRows(s.id,{year:P.year,month:P.month}); const st=stats(rows); return {st,v:st.n>=minN()?metricOf(st,m):NaN}; };
+  if(RB){ RB.beads.each(function(d){ const r=val(d.s); const g=d3.select(this); const has=isNum(r.v);
+    g.select('.c').transition().duration(350).attr('r',has?9+14*Math.sqrt(Math.min(1,Math.abs(r.v)/mx)):7).attr('fill',has?col(r.v):'none').attr('stroke-dasharray',has?null:'3 3').attr('stroke-opacity',has?1:.5);
+    g.select('.v').text(has?(m==='NEP'&&r.v>0?'+':'')+f1(r.v):'').attr('y',has?-(14+14*Math.sqrt(Math.min(1,Math.abs(r.v)/mx))):-18);
+    g.attr('aria-label',`${d.s.label}: ${has?f1(r.v)+' '+UNIT:'not enough data'}`);
+    g.on('mousemove',ev=>tip(ribbonTip(d.s,r),ev)).on('mouseleave',untip).on('focus',ev=>{const b=ev.target.getBoundingClientRect();tip(ribbonTip(d.s,r),{clientX:b.right,clientY:b.top});}).on('blur',untip).on('click',()=>selectSite(d.s.id,true)).style('cursor','pointer'); }); }
+  // side streams
+  $('#side').innerHTML=sideSites.length?`<span class="t">Side streams</span>`+sideSites.map(s=>{ const r=val(s); const has=isNum(r.v); return `<div class="sbead" data-s="${s.id}" style="cursor:pointer" tabindex="0"><i style="background:${has?col(r.v):'transparent'};${has?'':'border-style:dashed;border-color:rgba(255,255,255,.5)'};width:${has?20+10*Math.sqrt(Math.min(1,Math.abs(r.v)/mx)):20}px;height:${has?20+10*Math.sqrt(Math.min(1,Math.abs(r.v)/mx)):20}px"></i><span>${esc(s.label)}<b class="num">${has?(m==='NEP'&&r.v>0?'+':'')+f1(r.v):'no data'}</b></span></div>`; }).join(''):'';
+  $$('.sbead',$('#side')).forEach(b=>{ const s=SITE[b.dataset.s]; const r=val(s); b.onmousemove=ev=>tip(ribbonTip(s,r),ev); b.onmouseleave=untip; b.onclick=()=>selectSite(s.id,true); });
+  const yrTxt=P.year==='all'?`all years (${YEARS[0]}–${YEARS[YEARS.length-1]})`:P.year, moTxt=P.month==='all'?'the whole season':MON[P.month-1];
+  const what=m==='GPP'?'how much oxygen the stream makes':m==='ER'?'how much oxygen the stream uses':'oxygen made minus oxygen used (green = net maker, purple = net user)';
+  $('#ribbon-note').innerHTML=`Each circle is a sensor site, upstream on the left. It shows ${what}, averaged over ${moTxt}, ${yrTxt}, in ${UNIT}. Bigger and brighter means more. Dashed circles have too few days that passed quality checks for this choice. Click a site to explore it.`;
+}
+function ribbonTip(s,r){ const st=r.st; if(!isNum(r.v)) return `<b>${esc(s.label)}</b>${esc(friendly(s))}<br>Not enough data for this choice.`;
+  return `<b>${esc(s.label)}</b>${esc(friendly(s))}<br>${METRIC_LABEL[P.metric]}: <b class="num" style="display:inline">${f1(r.v)}</b> ${UNIT}<br>Makes ${f1(st.gpp)}, uses ${f1(st.er)}<br>Based on ${st.n} days`; }
+
+/* ---- hero controls ---- */
+function initHero(){
+  const ys=$('#year-sel'); ys.innerHTML=`<option value="all">All years</option>`+YEARS.map(y=>`<option>${y}</option>`).join(''); ys.onchange=()=>{P.year=ys.value; updateRibbon(); if(P.site)renderSite();};
+  $$('#metric-seg button').forEach(b=>b.onclick=()=>{ P.metric=b.dataset.m; $$('#metric-seg button').forEach(x=>x.setAttribute('aria-pressed',x===b)); updateRibbon(); });
+  const mo=$('#months'); mo.innerHTML=`<button data-mo="all" aria-pressed="true">Whole season</button>`+MONTHS_PRESENT.map(m=>`<button data-mo="${m}" aria-pressed="false">${MON[m-1]}</button>`).join('')+`<button class="play" id="play" aria-label="Play through the months">Play months</button>`;
+  const setMonth=v=>{ P.month=v; $$('[data-mo]',mo).forEach(x=>x.setAttribute('aria-pressed',x.dataset.mo==String(v))); updateRibbon(); };
+  $$('[data-mo]',mo).forEach(b=>b.onclick=()=>{stopPlay();setMonth(b.dataset.mo==='all'?'all':+b.dataset.mo);});
+  function stopPlay(){ if(P.playing){clearInterval(P.playing);P.playing=null;$('#play').textContent='Play months';} }
+  $('#play').onclick=()=>{ if(P.playing){stopPlay();return;} let i=0; $('#play').textContent='Pause'; setMonth(MONTHS_PRESENT[0]); P.playing=setInterval(()=>{ i++; if(i>=MONTHS_PRESENT.length){stopPlay();setMonth('all');return;} setMonth(MONTHS_PRESENT[i]); },1100); };
+  buildRibbon(); updateRibbon();
+}
+
+/* ---- three ideas (river-wide summer typical) ---- */
+function initThree(){
+  const per=mainSites.map(s=>stats(siteRows(s.id).filter(d=>d.month>=6&&d.month<=8))).filter(s=>s.n>=10);
+  const med=k=>per.length?d3.median(per,s=>s[k]):NaN;
+  $('#typ-gpp').textContent=per.length?`Typical summer day on the Poudre: ${f1(med('gpp'))} ${UNIT}`:'No estimates yet';
+  $('#typ-er').textContent=per.length?`Typical summer day on the Poudre: ${f1(med('er'))} ${UNIT}`:'No estimates yet';
+  $('#typ-nep').textContent=per.length?`Typical summer day on the Poudre: ${med('nep')>0?'+':''}${f1(med('nep'))} ${UNIT}`:'No estimates yet';
+}
+
+/* ---- site explorer ---- */
+function initChips(){
+  const wrapC=$('#site-chips'); let html='';
+  const grp=(title,list)=>list.length?`<div class="grp">${title}</div>`+list.map(s=>`<button class="chip ${hasData(s)?'':'off'}" data-s="${s.id}" aria-pressed="false" title="${esc(friendly(s))}">${esc(s.label)}</button>`).join(''):'';
+  html+=grp('Poudre mainstem, headwaters to plains',mainSites)+grp('Side streams',sideSites); wrapC.innerHTML=html;
+  $$('.chip',wrapC).forEach(b=>b.onclick=()=>selectSite(b.dataset.s,false));
+  const best=SITES.filter(hasData).sort((a,b)=>(BY_SITE.get(b.id)||[]).length-(BY_SITE.get(a.id)||[]).length)[0]||SITES[0]; if(best) selectSite(best.id,false);
+}
+function selectSite(id,scroll){ P.site=id; $$('#site-chips .chip').forEach(b=>b.setAttribute('aria-pressed',b.dataset.s===id)); renderSite(); if(scroll) $('#explore').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}); }
+
+function confidenceOf(s){
+  const rows=BY_SITE.get(s.id)||[]; const pass=rows.length?rows.filter(d=>d.pass).length/rows.length:0;
+  const few=passN(s.id)<MIN_ALL, slow=isNum(s.K600)&&s.K600<5, fast=isNum(s.K600)&&s.K600>=100, assumed=/manual|none|unknown/i.test(s.conf), proxy=/proxy/i.test(s.conf);
+  if(few) return {lvl:'Lower',col:C.bad,why:'Only a few days from this site passed quality checks, so treat these numbers as a first look.'};
+  if(pass<.5) return {lvl:'Lower',col:C.bad,why:'Fewer than half of the daily estimates here passed quality checks.'};
+  if(slow) return {lvl:'Lower',col:C.bad,why:'This reach is very flat, so the estimate of air exchange is uncertain.'};
+  if(assumed||fast) return {lvl:'Lower',col:C.bad,why:fast?'Fast, steep water exchanges oxygen with the air quickly, which makes the daily signal faint.':'No nearby river gauge for this site, so air exchange was estimated from similar reaches.'};
+  if(proxy||pass<.8) return {lvl:'Medium',col:C.warn,why:proxy?'River flow here is borrowed from a nearby gauge, so air exchange is less certain.':'A share of daily estimates failed quality checks and were left out.'};
+  return {lvl:'Higher',col:C.ok,why:'River flow was measured at or near this site and most daily estimates passed quality checks.'};
+}
+function classOf(pr){ return pr<0.8?{t:'uses more oxygen than it makes',c:C.er}:pr>1.2?{t:'makes more oxygen than it uses',c:C.gpp}:{t:'is roughly balanced between making and using oxygen',c:C.canyon||'#0D5C6E'}; }
+
+function renderSite(){
+  const s=SITE[P.site]; const host=$('#site-view'); const rows=siteRows(s.id,{year:P.year});
+  if(!rows.length){ host.innerHTML=`<div class="site-head"><h3>${esc(s.label)}</h3><span>${esc(friendly(s))}</span></div><p class="intro">There are no estimates for this site${P.year==='all'?'':' in '+P.year} yet. ${P.year==='all'?'Sondes here may not have recorded long enough, or the data are still being processed.':'Try another year.'}</p>`; return; }
+  const summer=stats(rows.filter(d=>d.month>=6&&d.month<=8)), all=stats(rows);
+  const use=summer.n>=10?summer:all; const label=summer.n>=10?'summer':'season';
+  const cls=classOf(use.pr); const conf=confidenceOf(s);
+  const mm=[...monthlyMeans(rows,'GPP')].filter(([m])=>rows.filter(d=>d.month===m).length>=5).sort((a,b)=>b[1]-a[1]); const peak=mm[0];
+  const rank=(()=>{ const all=mainSites.concat(sideSites).map(x=>{const st=stats(siteRows(x.id,{year:P.year}).filter(d=>d.month>=6&&d.month<=8)); return {id:x.id,v:st.n>=MIN_SUB*2?st.gpp:NaN};}).filter(x=>isNum(x.v)); if(all.length<3||!isNum(summer.gpp)) return ''; const n=all.filter(x=>x.v<summer.gpp).length; return `Summer production here is higher than at ${n} of the other ${all.length-1} sites.`; })();
+  const pos=Math.max(0,Math.min(1,(Math.log2(use.pr)+2)/4));
+  const years=[...new Set(rows.map(d=>d.year))];
+  const thin=passN(s.id)<MIN_ALL?`<div class="note" style="border-left:4px solid ${C.warn};padding:10px 14px;background:#FFF7E6;border-radius:8px;margin:0 0 14px"><b>Only ${passN(s.id)} day${passN(s.id)===1?'':'s'} of estimates passed quality checks here.</b> That is too few to describe a typical season, so the charts below are a first look rather than a result.</div>`:'';
+  host.innerHTML=thin+`<div class="site-head"><h3>${esc(friendly(s))}</h3><span>${esc(s.label)}${isNum(s.elev)?' · '+f0(s.elev)+' m elevation':''} · ${esc(s.group)}</span></div>
+  <div class="site-grid">
+    <div>
+      <div class="panel"><h4>A typical season</h4><div class="sub">Average day in each month, ${P.year==='all'?'all years':P.year}. Shading shows how much years differed.</div><div class="legend"><span><i style="background:${C.gpp}"></i>Oxygen made</span><span><i style="background:${C.er}"></i>Oxygen used (shown below the line)</span></div><div id="chart-season"></div></div>
+      <div class="panel" id="year-panel"><h4>Year by year</h4><div class="sub">Average summer day (June to August) in each year.</div><div class="legend"><span><i style="background:${C.gpp}"></i>Made</span><span><i style="background:${C.er}"></i>Used</span></div><div id="chart-years"></div><div id="chart-flow"></div></div>
+    </div>
+    <ul class="facts">
+      <li><b>A typical ${label} day</b><span>The stream makes <b class="num" style="display:inline;color:${C.gpp}">${f1(use.gpp)}</b> and uses <b class="num" style="display:inline;color:${C.er}">${f1(use.er)}</b> ${UNIT}. Overall it ${cls.t}.</span>
+        <div class="meter" role="img" aria-label="Production to respiration ratio ${f2(use.pr)}"><i style="left:${pos*100}%"></i></div><div class="meter-l"><span>Uses more</span><span class="num">ratio ${f2(use.pr)}</span><span>Makes more</span></div></li>
+      ${peak?`<li><b>Busiest month</b><span>Oxygen production usually peaks in ${MON[peak[0]-1]}, at about ${f1(peak[1])} ${UNIT}.</span></li>`:''}
+      ${rank?`<li><b>Compared with the rest of the river</b><span>${rank}</span></li>`:''}
+      <li><b>How sure are we? <span class="badge" style="background:${conf.col}">${conf.lvl} confidence</span></b><span>${conf.why}</span></li>
+      <li><b>The record</b><span>${f0(rows.length)} days of estimates across ${years.length} ${years.length===1?'year':'years'} (${years[0]}${years.length>1?'–'+years[years.length-1]:''}). Sondes come out of the river each winter.</span></li>
+    </ul>
+  </div>`;
+  drawSeason($('#chart-season'),rows); drawYears($('#chart-years'),$('#chart-flow'),s);
+}
+function drawSeason(el,rows){
+  const months=MONTHS_PRESENT.filter(m=>m>=3&&m<=11); const m={t:10,r:12,b:30,l:48}; const {svg,g,w,h}=mount(el,300,m); g.node().__left=m.l;
+  const stat=months.map(mo=>{ const r=rows.filter(d=>d.month===mo); const yrs=d3.rollup(r,v=>({g:d3.mean(v,d=>d.GPP),e:d3.mean(v,d=>d.ERm),n:v.length}),d=>d.year); const ok5=[...yrs.values()].filter(v=>v.n>=5); return {mo,n:r.length,gm:d3.mean(r,d=>d.GPP),em:d3.mean(r,d=>d.ERm),gl:d3.min(ok5,v=>v.g),gh:d3.max(ok5,v=>v.g),el:d3.min(ok5,v=>v.e),eh:d3.max(ok5,v=>v.e),ny:ok5.length}; }).filter(d=>d.n>=5);
+  if(!stat.length){ nodata(el,'Not enough days to show a seasonal pattern.'); return; }
+  const mx=d3.max(stat,d=>Math.max(d.gh||d.gm,d.eh||d.em)); const x=d3.scalePoint().domain(months).range([14,w-14]); const y=d3.scaleLinear().domain([-mx*1.08,mx*1.08]).nice().range([h,0]);
+  const grid=g.append('g').attr('class','grid').call(d3.axisLeft(y).ticks(6).tickSize(-w).tickFormat('')); const ax=g.append('g').attr('class','axis').call(d3.axisLeft(y).ticks(6).tickFormat(v=>f0(Math.abs(v)))); ax.select('.domain').remove();
+  g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).tickFormat(v=>MON[v-1]).tickSize(0)).select('.domain').remove();
+  g.append('line').attr('x1',0).attr('x2',w).attr('y1',y(0)).attr('y2',y(0)).attr('stroke',C.ink).attr('stroke-width',1.2);
+  const area=(top,bot)=>d3.area().x(d=>x(d.mo)).y0(d=>y(bot(d))).y1(d=>y(top(d))).curve(d3.curveMonotoneX).defined(d=>isNum(top(d))&&isNum(bot(d)));
+  g.append('path').attr('d',area(d=>d.gh,d=>d.gl)(stat)).attr('fill',C.gpp).attr('opacity',.16);
+  g.append('path').attr('d',area(d=>-d.el,d=>-d.eh)(stat)).attr('fill',C.er).attr('opacity',.16);
+  g.append('path').attr('d',area(d=>d.gm,()=>0)(stat)).attr('fill',C.gpp).attr('opacity',.28);
+  g.append('path').attr('d',area(d=>-d.em,()=>0)(stat)).attr('fill',C.er).attr('opacity',.28);
+  g.append('path').attr('d',d3.line().x(d=>x(d.mo)).y(d=>y(d.gm)).curve(d3.curveMonotoneX)(stat)).attr('fill','none').attr('stroke',C.gpp).attr('stroke-width',2.6);
+  g.append('path').attr('d',d3.line().x(d=>x(d.mo)).y(d=>y(-d.em)).curve(d3.curveMonotoneX)(stat)).attr('fill','none').attr('stroke',C.er).attr('stroke-width',2.6);
+  g.append('text').attr('transform','rotate(-90)').attr('x',-h/2).attr('y',-38).attr('text-anchor','middle').attr('fill',C.muted).attr('font-size',12).text(UNIT);
+  g.append('text').attr('x',w-4).attr('y',y(0)-8).attr('text-anchor','end').attr('font-size',12).attr('fill',C.gpp).attr('font-weight',700).text('made');
+  g.append('text').attr('x',w-4).attr('y',y(0)+17).attr('text-anchor','end').attr('font-size',12).attr('fill',C.er).attr('font-weight',700).text('used');
+  const band=w/Math.max(1,months.length);
+  g.selectAll('rect.hit').data(stat).join('rect').attr('class','hit').attr('x',d=>x(d.mo)-band/2).attr('width',band).attr('y',0).attr('height',h).attr('fill','transparent').attr('tabindex',0)
+   .on('mousemove',(ev,d)=>tip(`<b>${MON[d.mo-1]}</b>Makes ${f1(d.gm)} · uses ${f1(d.em)}<br>Net ${d.gm-d.em>0?'+':''}${f1(d.gm-d.em)} ${UNIT}<br>${d.ny>1?'Years ranged '+f1(d.gl)+' to '+f1(d.gh)+' made':'One year of data'}`,ev)).on('mouseleave',untip);
+}
+function drawYears(el,flowEl,s){
+  const all=siteRows(s.id); const ys=YEARS.filter(y=>all.filter(d=>d.year===y&&d.month>=6&&d.month<=8).length>=10);
+  const data=ys.map(y=>stats(all.filter(d=>d.year===y&&d.month>=6&&d.month<=8)));
+  if(!ys.length){ nodata(el,'Not enough summer days in any single year.'); flowEl.innerHTML=''; return; }
+  const m={t:6,r:10,b:26,l:48}; const {svg,g,w,h}=mount(el,210,m); g.node().__left=m.l;
+  const x0=d3.scaleBand().domain(ys).range([0,w]).padding(.25), x1=d3.scaleBand().domain(['g','e']).range([0,x0.bandwidth()]).padding(.08);
+  const y=d3.scaleLinear().domain([0,d3.max(data,d=>Math.max(d.gpp,d.er))]).nice().range([h,0]);
+  g.append('g').attr('class','grid').call(d3.axisLeft(y).ticks(4).tickSize(-w).tickFormat('')); g.append('g').attr('class','axis').call(d3.axisLeft(y).ticks(4)).select('.domain').remove(); g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x0).tickSize(0)).select('.domain').remove();
+  ys.forEach((yr,i)=>{ [['g',data[i].gpp,C.gpp,'made'],['e',data[i].er,C.er,'used']].forEach(([k,v,c,t])=>{ g.append('rect').attr('x',x0(yr)+x1(k)).attr('width',x1.bandwidth()).attr('y',y(v)).attr('height',h-y(v)).attr('fill',c).attr('rx',2).attr('tabindex',0).on('mousemove',ev=>tip(`<b>${yr}</b>Summer day ${t}: ${f1(v)} ${UNIT}<br>${data[i].n} days`,ev)).on('mouseleave',untip); }); });
+  // flow context
+  const fl=FLOW.get(s.id); if(fl&&fl.length){ const fy=ys.map(yr=>({yr,q:d3.mean(fl.filter(d=>{const dt=new Date(d.t);return dt.getUTCFullYear()===yr&&dt.getUTCMonth()>=4&&dt.getUTCMonth()<=6&&isNum(d.y);}),d=>d.y)}));
+    const mm={t:4,r:10,b:22,l:48}; const r=mount(flowEl,96,mm); r.g.node().__left=mm.l; const xs=d3.scaleBand().domain(ys).range([0,r.w]).padding(.25); const yq=d3.scaleLinear().domain([0,d3.max(fy,d=>d.q)||1]).nice().range([r.h,0]);
+    r.g.append('g').attr('class','axis').call(d3.axisLeft(yq).ticks(2)).select('.domain').remove(); r.g.append('g').attr('class','axis').attr('transform',`translate(0,${r.h})`).call(d3.axisBottom(xs).tickSize(0)).select('.domain').remove();
+    fy.forEach(d=>{ if(isNum(d.q)) r.g.append('rect').attr('x',xs(d.yr)).attr('width',xs.bandwidth()).attr('y',yq(d.q)).attr('height',r.h-yq(d.q)).attr('fill',C.flow).attr('opacity',.8).attr('rx',2).on('mousemove',ev=>tip(`<b>${d.yr}</b>Average May–July flow: ${f1(d.q)} m³/s`,ev)).on('mouseleave',untip); });
+    flowEl.insertAdjacentHTML('afterbegin',`<div class="sub" style="margin:8px 0 0">Spring runoff that year, average May–July river flow (m³/s). Big runoff years scour the riverbed and can hold production back.</div>`); const svgn=flowEl.querySelector('svg'); }
+  else flowEl.innerHTML='';
+}
+function initFooter(){ $('#foot-data').innerHTML=`${SITES.length} sites · ${HAS_DATA?`${f0(DAILY.length)} daily estimates, ${YEARS[0]}–${YEARS[YEARS.length-1]}`:'no estimates loaded yet'}`; }
+
+/* ================= research page ================= */
+const R={tab:'overview',sites:new Set(SITES.filter(hasData).map(s=>s.id)),years:new Set(YEARS),months:new Set(MONTHS_PRESENT),flagged:false,smooth:7,
+  ov:{flow:true,precip:true,visits:true},focus:(SITES.filter(hasData)[0]||SITES[0]||{}).id,metric:'GPP',mode:'depth',xDomain:null,seasonView:'means',compareMetric:'GPP',colorBy:'site',
+  mapMetric:'GPP',driver:(DRIVERS[0]||[])[0],driverMetric:'GPP'};
+const METRICS={GPP:{name:'GPP',unit:'g O₂ m⁻² d⁻¹',get:d=>d.GPP,color:C.gpp},ER:{name:'ER',unit:'g O₂ m⁻² d⁻¹ (negative = consumed)',get:d=>d.ER,color:C.er},NEP:{name:'NEP',unit:'g O₂ m⁻² d⁻¹',get:d=>d.NEP,color:'#0D5C6E'},PR:{name:'P:R',unit:'GPP / |ER|',get:d=>d.PR,color:'#587079'}};
+const ERm=(d)=>d.ERm;
+function srows(id){ return (BY_SITE.get(id)||[]).filter(d=>R.years.has(d.year)&&R.months.has(d.month)&&(R.flagged||d.pass)); }
+function rrows(){ const o=[]; R.sites.forEach(id=>srows(id).forEach(d=>o.push(d))); return o; }
+const selSites=()=>SITES.filter(s=>R.sites.has(s.id));
+const dataSites=()=>selSites().filter(s=>srows(s.id).length);
+
+/* ---- rail ---- */
+function buildRail(){
+  const rail=$('#rail'); const grp=(t,l)=>l.length?`<div class="g">${t}</div>`+l.map(s=>`<label><input type="checkbox" data-site="${s.id}" ${R.sites.has(s.id)?'checked':''}><span class="sw" style="background:${s.color}"></span>${esc(s.label)}<small>${(BY_SITE.get(s.id)||[]).length?f0((BY_SITE.get(s.id)||[]).length)+' d':'no data'}</small></label>`).join(''):'';
+  rail.innerHTML=`<h4>Sites</h4><div class="mini"><button class="btn" data-pick="all">All</button><button class="btn" data-pick="none">None</button><button class="btn" data-pick="main">Mainstem</button><button class="btn" data-pick="side">Side streams</button></div>
+  <div class="sitelist">${grp('Poudre mainstem',SITES.filter(isMain))}${grp('Side streams',SITES.filter(s=>!isMain(s)))}</div>
+  <h4>Years</h4><div class="chips" id="r-years">${YEARS.map(y=>`<button class="chip" data-y="${y}" aria-pressed="${R.years.has(y)}">${y}</button>`).join('')}</div>
+  <h4>Months</h4><div class="chips" id="r-months">${MONTHS_PRESENT.map(m=>`<button class="chip" data-m="${m}" aria-pressed="${R.months.has(m)}">${MON[m-1]}</button>`).join('')}</div>
+  <h4>Quality</h4><label class="chk"><input type="checkbox" id="r-flag" ${R.flagged?'checked':''}><span>Include days that failed plausibility checks (GPP ≤ 0 or ER ≥ 0, or non-converged)</span></label>
+  <h4>Smoothing</h4><select id="r-smooth" aria-label="Smoothing window">${[[0,'None (daily)'],[7,'7-day mean'],[14,'14-day mean'],[30,'30-day mean']].map(([v,l])=>`<option value="${v}" ${R.smooth===v?'selected':''}>${l}</option>`).join('')}</select>
+  <h4>Overlays on the time series</h4>
+  <label class="chk"><input type="checkbox" data-ov="flow" ${R.ov.flow?'checked':''}><span>River flow ${HAS_FLOW?'':'(no flow loaded)'}</span></label>
+  <label class="chk"><input type="checkbox" data-ov="precip" ${R.ov.precip?'checked':''}><span>Precipitation ${HAS_PRECIP?'':'(no precipitation loaded)'}</span></label>
+  <label class="chk"><input type="checkbox" data-ov="visits" ${R.ov.visits?'checked':''}><span>Site visits</span></label>
+  <h4>Data</h4><div class="mini"><button class="btn pri" id="r-dl">Download filtered days (CSV)</button></div><div class="mini"><button class="btn" id="r-reset">Reset filters</button></div>`;
+  rail.onchange=e=>{ const t=e.target;
+    if(t.dataset.site){ t.checked?R.sites.add(t.dataset.site):R.sites.delete(t.dataset.site); }
+    else if(t.id==='r-flag') R.flagged=t.checked; else if(t.id==='r-smooth') R.smooth=+t.value; else if(t.dataset.ov) R.ov[t.dataset.ov]=t.checked; else return;
+    R.xDomain=null; renderR(); };
+  rail.onclick=e=>{ const b=e.target.closest('button'); if(!b) return;
+    if(b.dataset.pick){ const k=b.dataset.pick; R.sites=new Set(SITES.filter(s=>k==='all'||(k==='main'&&isMain(s))||(k==='side'&&!isMain(s))).map(s=>s.id)); $$('[data-site]',rail).forEach(c=>c.checked=R.sites.has(c.dataset.site)); }
+    else if(b.dataset.y){ const y=+b.dataset.y; R.years.has(y)?R.years.delete(y):R.years.add(y); b.setAttribute('aria-pressed',R.years.has(y)); }
+    else if(b.dataset.m){ const m=+b.dataset.m; R.months.has(m)?R.months.delete(m):R.months.add(m); b.setAttribute('aria-pressed',R.months.has(m)); }
+    else if(b.id==='r-dl'){ const rows=rrows().map(d=>({site:d.site,date:d.date,GPP:d.GPP,ER:d.ER,NEP:d.NEP,PR:d.PR,K600:d.K600,qc_pass:d.pass})); dl('poudre_metabolism_filtered.csv',csvOf(rows,['site','date','GPP','ER','NEP','PR','K600','qc_pass'])); return; }
+    else if(b.id==='r-reset'){ R.sites=new Set(SITES.filter(hasData).map(s=>s.id)); R.years=new Set(YEARS); R.months=new Set(MONTHS_PRESENT); R.flagged=false; R.smooth=7; buildRail(); }
+    else return; R.xDomain=null; renderR(); };
+}
+
+/* ---- tabs ---- */
+const RTABS=[['overview','Overview'],['timeseries','Time series'],['seasonal','Seasons and distributions'],['relationships','Relationships'],['drivers','Drivers'],['quality','Data quality'],['visits','Site visits']];
+function buildTabs(){ const t=$('#rtabs'); t.innerHTML=RTABS.map(([k,l])=>`<button role="tab" data-t="${k}" aria-selected="${R.tab===k}">${l}</button>`).join(''); t.onclick=e=>{ const b=e.target.closest('button'); if(!b) return; setRTab(b.dataset.t); }; }
+function setRTab(k){ R.tab=k; $$('#rtabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===k)); if(location.hash!=='#research'+(k==='overview'?'':'/'+k)) history.replaceState(null,'','#research'+(k==='overview'?'':'/'+k)); renderR(); }
+function renderR(){ const v=$('#rview'); untip(); ({overview:vOverview,timeseries:vTimeseries,seasonal:vSeasonal,relationships:vRelationships,drivers:vDrivers,quality:vQuality,visits:vVisits})[R.tab](v); }
+const seg=(id,opts,cur)=>`<span class="seg" id="${id}" role="group">${opts.map(([v,l])=>`<button data-v="${v}" aria-pressed="${cur===v}">${l}</button>`).join('')}</span>`;
+function bindSeg(id,fn){ const s=$('#'+id); if(!s) return; s.onclick=e=>{ const b=e.target.closest('button'); if(b) fn(b.dataset.v); }; }
+const siteOpts=(list,cur)=>list.map(s=>`<option value="${s.id}" ${s.id===cur?'selected':''}>${esc(s.label)} · ${esc(s.desc.slice(0,48))}</option>`).join('');
+const noSel=()=>`<div class="panel"><div class="empty">No days match the current filters. Pick at least one site, year and month on the left.</div></div>`;
+
+/* ---------- overview ---------- */
+function vOverview(v){
+  const rows=rrows(); if(!rows.length&&!selSites().length){ v.innerHTML=noSel(); return; }
+  const mOpts=[['GPP','GPP'],['ER','|ER|'],['NEP','NEP'],['PR','P:R']];
+  v.innerHTML=`<div class="ctl"><span>Color the map by</span>${seg('map-metric',mOpts,R.mapMetric)}<span class="note" style="margin:0">Mean of the filtered days. Click a site to open its time series.</span></div>
+  <div class="grid2 wide"><div class="panel"><h4>Site map</h4><div class="sub">Dashed line links mainstem sites in river order; it is not the river's exact course.</div><div id="map"></div><div id="map-legend" class="note"></div></div>
+  <div class="panel"><h4>Summary by site</h4><div class="sub">Mean ± SD of daily estimates that pass checks, over the filtered period.</div><div class="scroll-x" id="sumtab"></div></div></div>
+  <div class="panel"><h4>Days with estimates, by month</h4><div class="sub">Sondes are pulled each winter, so gaps from November to March are expected.</div><div class="scroll-x"><div id="cov"></div></div></div>`;
+  bindSeg('map-metric',m=>{R.mapMetric=m;vOverview(v);});
+  drawMap($('#map'),$('#map-legend')); drawSummary($('#sumtab')); drawCoverage($('#cov'));
+}
+function metricMean(rows,m){ const st=stats(rows.filter(d=>d.pass||R.flagged)); return m==='GPP'?st.gpp:m==='ER'?st.er:m==='NEP'?st.nep:st.pr; }
+function drawMap(el,leg){
+  const pts=SITES.filter(s=>isNum(s.lat)&&isNum(s.lon)); if(!pts.length){nodata(el,'No site coordinates loaded.');return;}
+  const lat0=d3.mean(pts,s=>s.lat)*Math.PI/180, kx=Math.cos(lat0); const ex=d3.extent(pts,s=>s.lon*kx), ey=d3.extent(pts,s=>s.lat);
+  const W=Math.max(300,el.clientWidth||560), m=28, mr=64, spanX=(ex[1]-ex[0])||1, spanY=(ey[1]-ey[0])||1; const sc=Math.min((W-m-mr)/spanX,(520-2*m)/spanY), H=spanY*sc+2*m;
+  const px=s=>m+(s.lon*kx-ex[0])*sc+((W-m-mr)-spanX*sc)/2, py=s=>H-m-(s.lat-ey[0])*sc;
+  el.innerHTML=''; const svg=d3.select(el).append('svg').attr('width',W).attr('height',H).attr('viewBox',`0 0 ${W} ${H}`);
+  const main=pts.filter(isMain); svg.append('path').attr('d',d3.line()(main.map(s=>[px(s),py(s)]))).attr('fill','none').attr('stroke','#9CC3E3').attr('stroke-width',2).attr('stroke-dasharray','6 5');
+  const vals=new Map(SITES.map(s=>{ const r=srows(s.id); return [s.id,{n:r.length,v:r.length>=MIN_SUB?metricMean(r,R.mapMetric):NaN}]; }));
+  const arr=[...vals.values()].map(x=>x.v).filter(isNum); const dom=arr.length?d3.extent(arr):[0,1];
+  const col=R.mapMetric==='NEP'||R.mapMetric==='ER'&&false?d3.scaleDiverging().domain([dom[0],0,Math.max(dom[1],.01)]).interpolator(t=>d3.interpolateRgb(t<.5?'#7B4FA3':'#fff',t<.5?'#fff':'#2F9E6B')(t<.5?t*2:(t-.5)*2)):d3.scaleSequential(d3.interpolateRgb('#E5F1EF','#0D5C6E')).domain(R.mapMetric==='ER'?[dom[0],dom[1]]:[dom[0],dom[1]||1]);
+  const g=svg.selectAll('g.s').data(pts).join('g').attr('class','s').attr('transform',s=>`translate(${px(s)},${py(s)})`).attr('tabindex',0).style('cursor','pointer').attr('role','button').attr('aria-label',s=>'Open time series for '+s.label);
+  g.append('circle').attr('r',s=>R.sites.has(s.id)?11:7).attr('fill',s=>{ const x=vals.get(s.id); return isNum(x.v)&&R.sites.has(s.id)?col(x.v):'#fff'; }).attr('stroke',s=>R.sites.has(s.id)?C.ink:C.line).attr('stroke-width',s=>s.id===R.focus?3:1.4).attr('stroke-dasharray',s=>isNum(vals.get(s.id).v)?null:'3 2');
+  const placed=[]; const showLbl=new Set(); pts.slice().sort((a,b)=>(R.sites.has(b.id)-R.sites.has(a.id))).forEach(s=>{ const x=px(s),y=py(s); if(!placed.some(q=>Math.abs(q[0]-x)<62&&Math.abs(q[1]-y)<13)){ placed.push([x,y]); showLbl.add(s.id); } });
+  g.append('text').attr('x',14).attr('y',4).attr('font-size',11.5).attr('display',s=>showLbl.has(s.id)?null:'none').attr('font-weight',600).attr('fill',s=>R.sites.has(s.id)?C.ink:C.faint||'#8AA0A7').text(s=>s.label);
+  g.on('mousemove',(ev,s)=>{ const x=vals.get(s.id); tip(`<b>${esc(s.label)}</b>${esc(s.desc)}<br>${isNum(x.v)?`${R.mapMetric==='ER'?'|ER|':R.mapMetric} mean: <b class="num" style="display:inline">${f2(x.v)}</b><br>${x.n} days`:'No days for this selection'}`,ev); }).on('mouseleave',untip).on('click',(ev,s)=>{R.focus=s.id;R.mode='depth';R.xDomain=null;setRTab('timeseries');}).on('keydown',(ev,s)=>{ if(ev.key==='Enter'){R.focus=s.id;R.mode='depth';setRTab('timeseries');} });
+  leg.textContent=`Circles ${isNum(dom[0])?`range from ${f2(dom[0])} to ${f2(dom[1])}`:''}. Faded circles are not selected in the filters; dashed circles have too few days. Labels of sites that sit on top of each other appear on hover.`;
+}
+function drawSummary(el){
+  const rows=SITES.map(s=>{ const r=srows(s.id), all=(BY_SITE.get(s.id)||[]); const st=stats(r.filter(d=>d.pass||R.flagged)); const yrs=[...new Set(r.map(d=>d.year))]; return {s,st,n:r.length,yrs,pass:all.length?all.filter(d=>d.pass).length/all.length:NaN}; });
+  el.innerHTML=`<table><thead><tr><th>Site</th><th class="r">Days</th><th>Years</th><th class="r">GPP</th><th class="r">|ER|</th><th class="r">NEP</th><th class="r">P:R</th><th class="r">Passed</th></tr></thead><tbody>${rows.map(({s,st,n,yrs,pass})=>`<tr class="click" data-s="${s.id}" style="${R.sites.has(s.id)?'':'opacity:.45'}"><td><i class="dot" style="background:${s.color};width:9px;height:9px;margin-right:7px"></i><b>${esc(s.label)}</b></td><td class="r num">${n?f0(n):'–'}</td><td class="num">${yrs.length?yrs[0]+(yrs.length>1?'–'+yrs[yrs.length-1]:''):'no estimate'}</td><td class="r num">${n?f1(st.gpp)+' ± '+f1(st.gppSd):'–'}</td><td class="r num">${n?f1(st.er)+' ± '+f1(st.erSd):'–'}</td><td class="r num">${n?(st.nep>0?'+':'')+f1(st.nep):'–'}</td><td class="r num">${n?f2(st.pr):'–'}</td><td class="r num">${isNum(pass)?f0(pass*100)+'%':'–'}</td></tr>`).join('')}</tbody></table>`;
+  $$('tr.click',el).forEach(tr=>tr.onclick=()=>{R.focus=tr.dataset.s;R.mode='depth';R.xDomain=null;setRTab('timeseries');});
+}
+function drawCoverage(el){
+  const ymKeys=[]; YEARS.forEach(y=>MONTHS_PRESENT.forEach(m=>ymKeys.push(y+'-'+String(m).padStart(2,'0')))); const cnt=new Map();
+  DAILY.forEach(d=>{ const k=d.site+'|'+d.date.slice(0,7); cnt.set(k,(cnt.get(k)||0)+1); });
+  const cols=ymKeys.map(k=>({key:k,label:k.endsWith('-03')||k.endsWith('-07')?(k.endsWith('-07')?'':k.slice(0,4)):''})); 
+  const w=Math.max(640,ymKeys.length*13+130); el.style.width=w+'px';
+  heatmap(el,{rows:SITES.map(s=>({key:s.id,label:s.label})),cols,value:(r,c)=>{const n=cnt.get(r+'|'+c);return n==null?NaN:n;},color:d3.scaleSequential(d3.interpolateRgb('#CFE6EC','#0D5C6E')).domain([1,31]),cell:20,left:104,bottom:26,tip:d=>`<b>${esc(d.r.label)} · ${d.c.key}</b>${isNum(d.v)?f0(d.v)+' days with estimates':'no estimates'}`});
+  // year labels
+  const svg=d3.select(el).select('svg'); const g=svg.select('g'); 
+}
+
+/* ---------- time series ---------- */
+function visitsOf(id){ return (typeof VISITS_LIST==='function'?VISITS_LIST():[]).filter(v=>v.site===id); }
+function vTimeseries(v){
+  const sites=dataSites(); if(!sites.length){ v.innerHTML=noSel(); return; }
+  if(!sites.find(s=>s.id===R.focus)) R.focus=sites[0].id;
+  v.innerHTML=`<div class="ctl">${seg('ts-mode',[['depth','One site in depth'],['compare','Compare sites']],R.mode)}
+    ${R.mode==='depth'?`<label>Site <select id="ts-site">${siteOpts(sites,R.focus)}</select></label>`:`<label>Measure <select id="ts-metric">${Object.entries(METRICS).map(([k,m])=>`<option value="${k}" ${R.compareMetric===k?'selected':''}>${m.name}</option>`).join('')}</select></label>`}
+    <button class="btn" id="ts-reset" ${R.xDomain?'':'disabled'}>Reset zoom</button><span class="note" style="margin:0">Drag across a chart to zoom in.</span></div><div id="ts-body"></div>`;
+  bindSeg('ts-mode',m=>{R.mode=m;R.xDomain=null;vTimeseries(v);}); const ss=$('#ts-site'); if(ss) ss.onchange=()=>{R.focus=ss.value;R.xDomain=null;vTimeseries(v);}; const sm=$('#ts-metric'); if(sm) sm.onchange=()=>{R.compareMetric=sm.value;vTimeseries(v);}; $('#ts-reset').onclick=()=>{R.xDomain=null;vTimeseries(v);};
+  (R.mode==='depth'?tsDepth:tsCompare)($('#ts-body'),sites);
+}
+function xdom(allRows){ if(R.xDomain) return R.xDomain; const e=d3.extent(allRows,d=>d.t); return [new Date(e[0]-5*864e5),new Date(+e[1]+5*864e5)]; }
+function tsDepth(body,sites){
+  const s=SITE[R.focus], rows=srows(s.id); const xd=xdom(rows);
+  body.innerHTML=`<div class="panel"><h4>${esc(s.label)} · ${esc(s.desc)}</h4><div class="legend"><span><i style="background:${C.gpp}"></i>GPP</span><span><i style="background:${C.er}"></i>ER (negative)</span>${R.smooth?`<span>Lines: ${R.smooth}-day mean · dots: daily values</span>`:''}</div><div id="p1"></div><div class="sub" style="margin-top:8px">Net ecosystem production (GPP + ER)</div><div id="p2"></div><div id="p3box"></div><div id="p4box"></div></div>`;
+  const pts=k=>rows.map(d=>({x:new Date(d.t),y:d[k]})).filter(d=>isNum(d.y));
+  const zoom=r=>{R.xDomain=r;vTimeseries($('#rview'));};
+  const vis=R.ov.visits?visitsOf(s.id):[];
+  lineChart($('#p1'),{h:260,xDomain:xd,zero:true,yLabel:'g O₂ m⁻² d⁻¹',onBrush:zoom,series:[
+    {name:'GPP',color:C.gpp,data:pts('GPP'),mode:'dots',r:2,opacity:.28,noTip:true},{name:'ER',color:C.er,data:pts('ER'),mode:'dots',r:2,opacity:.28,noTip:true},
+    {name:'GPP'+(R.smooth?` (${R.smooth}-d)`:''),color:C.gpp,data:rolling(pts('GPP'),R.smooth),width:2.2},{name:'ER'+(R.smooth?` (${R.smooth}-d)`:''),color:C.er,data:rolling(pts('ER'),R.smooth),width:2.2}],
+    over:(g,x,y,w,h)=>vis.forEach(vv=>{ const t=Date.parse(vv.date+'T12:00:00Z'); if(t>=xd[0]&&t<=xd[1]) g.append('path').attr('d',d3.symbol(d3.symbolTriangle,60)()).attr('transform',`translate(${x(t)},${h-6})`).attr('fill',vv.issue?C.bad:C.visit); })});
+  lineChart($('#p2'),{h:150,xDomain:xd,zero:true,yLabel:'g O₂ m⁻² d⁻¹',onBrush:zoom,series:[{name:'NEP',color:'#0D5C6E',data:pts('NEP'),mode:'dots',r:2,opacity:.25,noTip:true},{name:'NEP'+(R.smooth?` (${R.smooth}-d)`:''),color:'#0D5C6E',data:rolling(pts('NEP'),R.smooth),width:2.2}]});
+  // flow + precip
+  const fl=(FLOW.get(s.id)||[]).filter(d=>d.t>=xd[0]&&d.t<=xd[1]).map(d=>({...d,x:new Date(d.t)})); const pr=PRECIP.filter(d=>d.t>=xd[0]&&d.t<=xd[1]).map(d=>({...d,x:new Date(d.t)}));
+  const showF=R.ov.flow&&fl.length, showP=R.ov.precip&&pr.length;
+  if(showF||showP){ $('#p3box').innerHTML=`<div class="sub" style="margin-top:8px">${showF?'River flow (m³/s)':''}${showF&&showP?' and ':''}${showP?'daily precipitation (mm, bars from top)':''}${showF&&!/direct/i.test(s.conf)?` · flow here is <b>${esc(s.conf)}</b>`:''}</div><div id="p3"></div>`;
+    const pmax=d3.max(pr,d=>d.y)||1;
+    lineChart($('#p3'),{h:150,xDomain:xd,onBrush:zoom,allowEmpty:true,yLabel:showF?'m³/s':'',series:showF?[{name:'Flow',color:C.flow,data:fl,width:1.8,fmt:v=>f2(v)+' m³/s',mode:'area',opacity:.12},...(showP?[{name:'Precipitation',color:'#6FA3D2',data:pr,mode:'dots',r:0,noTip:false,fmt:v=>f1(v)+' mm'}]:[])]:[{name:'Precipitation',color:'#6FA3D2',data:pr,mode:'dots',r:0,fmt:v=>f1(v)+' mm'}],yDomain:showF?null:[0,1],
+      over:(g,x,y,w,h)=>{ if(!showP) return; const yp=d3.scaleLinear().domain([0,pmax]).range([0,h*.45]); g.selectAll('rect.p').data(pr).join('rect').attr('class','p').attr('x',d=>x(d.t)-1).attr('width',2).attr('y',0).attr('height',d=>yp(d.y)).attr('fill',C.precip).attr('opacity',.9); }});
+  } else if(R.ov.flow||R.ov.precip){ $('#p3box').innerHTML=`<div class="note">${HAS_FLOW||HAS_PRECIP?'No flow or precipitation record for this site in this period.':'No flow or precipitation data loaded. Add them in the R workflow (flow_precip_daily.csv and gauge flow) to see them here.'}</div>`; }
+  // visit strip
+  if(R.ov.visits){ $('#p4box').innerHTML=`<div class="sub" style="margin-top:8px">Site visits ${vis.length?'':'(none logged for this site)'}</div><div id="p4"></div>`;
+    const el=$('#p4'); const {svg,g,w,h}=mount(el,46,{t:6,r:14,b:20,l:56}); const x=d3.scaleUtc().domain(xd).range([0,w]); g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).ticks(Math.max(3,Math.floor(w/90))).tickSizeOuter(0));
+    g.selectAll('g.v').data(vis.filter(vv=>{const t=Date.parse(vv.date+'T12:00:00Z');return t>=xd[0]&&t<=xd[1];})).join('g').attr('class','v').attr('tabindex',0).each(function(vv){ const t=Date.parse(vv.date+'T12:00:00Z'); d3.select(this).append('line').attr('x1',x(t)).attr('x2',x(t)).attr('y1',0).attr('y2',h).attr('stroke',vv.issue?C.bad:C.visit).attr('stroke-width',2); d3.select(this).append('circle').attr('cx',x(t)).attr('cy',h/2).attr('r',5).attr('fill',vv.issue?C.bad:C.visit); d3.select(this).on('mousemove',ev=>tip(`<b>${vv.date}</b>${esc((vv.type||[]).join(', '))}${vv.tech?' · '+esc(vv.tech):''}<br>${esc(vv.notes||'')}`,ev)).on('mouseleave',untip); }); }
+}
+function tsCompare(body,sites){
+  const m=METRICS[R.compareMetric]; const all=sites.flatMap(s=>srows(s.id)); const xd=xdom(all);
+  body.innerHTML=`<div class="panel"><h4>${m.name} across sites</h4><div class="sub">${R.smooth?R.smooth+'-day mean':'Daily values'} · ${m.unit}</div><div class="legend">${sites.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('')}</div><div id="c1"></div></div>`;
+  lineChart($('#c1'),{h:380,xDomain:xd,zero:R.compareMetric!=='PR',yLabel:m.name,hoverDays:3,onBrush:r=>{R.xDomain=r;vTimeseries($('#rview'));},
+    series:sites.map(s=>({name:s.label,color:s.color,width:1.6,data:rolling(srows(s.id).map(d=>({x:new Date(d.t),y:m.get(d)})).filter(d=>isNum(d.y)),R.smooth),fmt:f2,mode:'line'}))});
+}
+
+/* ---------- seasons and distributions ---------- */
+function vSeasonal(v){
+  const sites=dataSites(); if(!sites.length){ v.innerHTML=noSel(); return; }
+  if(!sites.find(s=>s.id===R.focus)) R.focus=sites[0].id;
+  v.innerHTML=`<div class="ctl">${seg('sv',[['means','Monthly means by year'],['boxyear','Box plots by year'],['boxmonth','Box plots by month']],R.seasonView)}
+   <label>Measure <select id="sm">${['GPP','ER','NEP','PR'].map(k=>`<option value="${k}" ${R.metric===k?'selected':''}>${METRICS[k].name}</option>`).join('')}</select></label>
+   ${R.seasonView==='means'?`<label>Site <select id="ss">${siteOpts(sites,R.focus)}</select></label>`:''}</div><div class="panel" id="sp"></div>`;
+  bindSeg('sv',x=>{R.seasonView=x;vSeasonal(v);}); $('#sm').onchange=e=>{R.metric=e.target.value;vSeasonal(v);}; const ss=$('#ss'); if(ss) ss.onchange=()=>{R.focus=ss.value;vSeasonal(v);};
+  const m=METRICS[R.metric], p=$('#sp');
+  if(R.seasonView==='means'){ const s=SITE[R.focus]; p.innerHTML=`<h4>${esc(s.label)}: monthly mean ${m.name} by year</h4><div class="sub">${esc(s.desc)}. Months with at least 5 days.</div><div class="legend" id="ml"></div><div id="mm"></div>`; monthYear($('#mm'),$('#ml'),s,m); }
+  else { const byYear=R.seasonView==='boxyear'; const groups=(byYear?YEARS.filter(y=>R.years.has(y)):MONTHS_PRESENT.filter(x=>R.months.has(x))).map(k=>({label:byYear?String(k):MON[k-1],boxes:Object.fromEntries(sites.map(s=>[s.id,srows(s.id).filter(d=>(byYear?d.year:d.month)===k).map(m.get).filter(isNum)]))}));
+    p.innerHTML=`<h4>${m.name} by ${byYear?'year':'month'}</h4><div class="sub">Box = middle half of days, line = median, white diamond = mean, whiskers = 1.5 × IQR. ${m.unit}</div><div class="legend">${sites.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('')}</div><div id="bx" class="scroll-x"></div>`;
+    boxChart($('#bx'),{groups,keys:sites.map(s=>s.id),colorOf:id=>SITE[id].color,nameOf:id=>SITE[id].label,yLabel:m.name,h:380}); }
+}
+function monthYear(el,legEl,s,m){
+  const rows=srows(s.id); const years=[...new Set(rows.map(d=>d.year))].sort(); const months=MONTHS_PRESENT.filter(x=>R.months.has(x));
+  const data=years.map(y=>({y,pts:months.map(mo=>{const r=rows.filter(d=>d.year===y&&d.month===mo); return {mo,v:r.length>=5?d3.mean(r,d=>m.get(d)):NaN,n:r.length};})}));
+  const col=d3.scaleSequential(d3.interpolateViridis).domain([years[0]-1,years[years.length-1]+.5]);
+  legEl.innerHTML=years.map(y=>`<span><i style="background:${col(y)}"></i>${y}</span>`).join('');
+  const mm={t:8,r:14,b:30,l:56}; const {svg,g,w,h}=mount(el,360,mm); g.node().__left=mm.l; const vals=data.flatMap(d=>d.pts.map(p=>p.v)).filter(isNum); if(!vals.length){nodata(el);return;}
+  const x=d3.scalePoint().domain(months).range([14,w-14]); const y=d3.scaleLinear().domain([Math.min(0,d3.min(vals)),Math.max(0,d3.max(vals))]).nice().range([h,0]);
+  yAxis(g,y,w,m.name); g.append('g').attr('class','axis').attr('transform',`translate(0,${h})`).call(d3.axisBottom(x).tickFormat(k=>MON[k-1]).tickSize(0)).select('.domain').remove(); if(y.domain()[0]<0) g.append('line').attr('x1',0).attr('x2',w).attr('y1',y(0)).attr('y2',y(0)).attr('stroke',C.muted).attr('opacity',.6);
+  data.forEach(d=>{ const segs=segments(d.pts.filter(p=>isNum(p.v)).map(p=>({x:p.mo*864e5*31,y:p.v,mo:p.mo,n:p.n})),40); segs.forEach(sg=>g.append('path').attr('d',d3.line().x(p=>x(p.mo)).y(p=>y(p.y)).curve(d3.curveMonotoneX)(sg)).attr('fill','none').attr('stroke',col(d.y)).attr('stroke-width',2));
+    g.selectAll(null).data(d.pts.filter(p=>isNum(p.v))).join('circle').attr('cx',p=>x(p.mo)).attr('cy',p=>y(p.v)).attr('r',3.6).attr('fill',col(d.y)).attr('stroke','#fff').on('mousemove',(ev,p)=>tip(`<b>${d.y} · ${MON[p.mo-1]}</b>${m.name} mean ${f2(p.v)}<br>${p.n} days`,ev)).on('mouseleave',untip); });
+}
+
+/* ---------- relationships ---------- */
+function vRelationships(v){
+  const sites=dataSites(); if(!sites.length){ v.innerHTML=noSel(); return; }
+  v.innerHTML=`<div class="ctl"><span>Color points by</span>${seg('cb',[['site','Site'],['year','Year'],['month','Month']],R.colorBy)}</div>
+  <div class="grid2 wide"><div class="panel"><h4>GPP versus respiration</h4><div class="sub">Each dot is one day. Above the dashed line, GPP exceeds |ER| (net autotrophic).</div><div class="legend" id="cl"></div><div id="cross"></div></div>
+  <div class="panel"><h4>Production to respiration ratio (P:R)</h4><div class="sub">By site, filtered days. Below 1 = net consuming.</div><div id="prb" class="scroll-x"></div></div></div>`;
+  bindSeg('cb',c=>{R.colorBy=c;vRelationships(v);});
+  const key=d=>R.colorBy==='site'?d.site:R.colorBy==='year'?d.year:d.month; const keys=[...new Set(sites.flatMap(s=>srows(s.id)).map(key))].sort((a,b)=>a>b?1:-1);
+  const colr=R.colorBy==='site'?k=>SITE[k].color:R.colorBy==='year'?d3.scaleSequential(d3.interpolateViridis).domain([YEARS[0]-1,YEARS[YEARS.length-1]+.5]):d3.scaleSequential(d3.interpolateRdYlBu).domain([11,3]);
+  const nameK=k=>R.colorBy==='site'?SITE[k].label:R.colorBy==='month'?MON[k-1]:String(k); $('#cl').innerHTML=keys.map(k=>`<span><i style="background:${colr(k)}"></i>${esc(nameK(k))}</span>`).join('');
+  scatterChart($('#cross'),{h:420,equal:true,oneToOne:true,oneLabel:'P:R = 1',xLabel:'GPP (g O₂ m⁻² d⁻¹)',yLabel:'|ER| (g O₂ m⁻² d⁻¹)',xName:'GPP',yName:'|ER|',
+    series:keys.map(k=>({name:nameK(k),color:colr(k),pts:sites.flatMap(s=>srows(s.id)).filter(d=>key(d)===k).map(d=>({x:d.GPP,y:d.ERm,label:d.site.toUpperCase()+' · '+d.date}))}))});
+  boxChart($('#prb'),{groups:sites.map(s=>({label:s.label,boxes:{x:srows(s.id).map(d=>d.PR).filter(d=>isNum(d)&&d<8)}})),keys:['x'],colorOf:()=>'#587079',nameOf:()=>'P:R',yLabel:'P:R (values above 8 hidden)',h:420,minBox:22});
+}
+
+/* ---------- drivers ---------- */
+function driverRows(id){ return srows(id).map(d=>({d,c:COV.get(d.site+'|'+d.date)})).filter(x=>x.c); }
+function vDrivers(v){
+  const sites=dataSites(); if(!sites.length||!DRIVERS.length){ v.innerHTML=sites.length?`<div class="panel"><div class="empty">No driver data loaded. Re-run the R workflow to export the sensor covariates.</div></div>`:noSel(); return; }
+  v.innerHTML=`<div><div class="panel"><h4>Correlation with GPP</h4><div class="sub">Spearman rank correlation, sites with at least 30 paired days.</div><div class="scroll-x"><div id="h1"></div></div></div><div class="panel"><h4>Correlation with |ER|</h4><div class="sub">Respiration shown as a positive amount, so a positive value means more respiration.</div><div class="scroll-x"><div id="h2"></div></div></div></div>
+  <div class="grid2 wide"><div class="panel"><h4>Look at one driver</h4><div class="ctl" style="margin-top:8px"><label>Driver <select id="dsel">${DRIVERS.map(([k,l])=>`<option value="${k}" ${k===R.driver?'selected':''}>${l}</option>`).join('')}</select></label><label>Against <select id="dm"><option value="GPP" ${R.driverMetric==='GPP'?'selected':''}>GPP</option><option value="ERm" ${R.driverMetric==='ERm'?'selected':''}>|ER|</option><option value="NEP" ${R.driverMetric==='NEP'?'selected':''}>NEP</option></select></label></div><div class="legend">${sites.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('')}</div><div id="dsc"></div><div class="note" id="drho"></div></div>
+  <div class="panel"><h4>Which variables matter most</h4><div class="sub">Random forest importance across all sites (from the R workflow, not affected by the filters).</div><div id="imp"></div></div></div>`;
+  const rho=(id,key,met)=>{ const r=driverRows(id).filter(x=>isNum(x.c[key]=nn(x.c[key]))&&isNum(x.d[met])); return r.length>=30?spearman(r.map(x=>x.c[key]),r.map(x=>x.d[met])):NaN; };
+  const color=d3.scaleDiverging().domain([-1,0,1]).interpolator(t=>t<.5?d3.interpolateRgb('#7B4FA3','#F7F7F7')(t*2):d3.interpolateRgb('#F7F7F7','#2F9E6B')((t-.5)*2));
+  const cols=sites.map(s=>({key:s.id,label:s.label}));
+  [['h1','GPP'],['h2','ERm']].forEach(([id,met])=>{ const el=$('#'+id); el.style.minWidth=Math.max(320,sites.length*44+170)+'px'; heatmap(el,{rows:DRIVERS.map(([k,l])=>({key:k,label:l})),cols,left:150,bottom:34,rotate:true,cell:30,value:(r,c)=>rho(c,r,met),color,text:v=>v.toFixed(2),textColor:v=>Math.abs(v)>.65?'#fff':C.ink,tip:d=>`<b>${esc(d.c.label)} · ${esc(d.r.label)}</b>${isNum(d.v)?'rho = '+d.v.toFixed(2):'fewer than 30 paired days'}`}); });
+  $('#dsel').onchange=e=>{R.driver=e.target.value;vDrivers(v);}; $('#dm').onchange=e=>{R.driverMetric=e.target.value;vDrivers(v);};
+  const lbl=Object.fromEntries(DRIVERS); const xs=[],ys=[]; const series=sites.map(s=>({name:s.label,color:s.color,pts:driverRows(s.id).map(x=>{const xv=nn(x.c[R.driver]),yv=x.d[R.driverMetric]; if(isNum(xv)&&isNum(yv)){xs.push(xv);ys.push(yv);} return {x:xv,y:yv,label:x.d.date};})}));
+  scatterChart($('#dsc'),{h:330,series,xLabel:lbl[R.driver],yLabel:{GPP:'GPP',ERm:'|ER|',NEP:'NEP'}[R.driverMetric],xName:lbl[R.driver],yName:R.driverMetric,r:2.2});
+  $('#drho').textContent=xs.length>=30?`All plotted days: Spearman rho = ${spearman(xs,ys).toFixed(2)} (n = ${f0(xs.length)}). Correlation is not causation, and drivers move together (for example light and temperature).`:'Too few paired days for a correlation.';
+  const imp=$('#imp'); if(!IMPORTANCE.length){ imp.innerHTML=`<div class="empty">Not available. Install the ranger package and re-run the drivers section in R.</div>`; }
+  else { imp.innerHTML=['GPP','|ER|'].map(r=>`<div class="sub" style="margin-top:10px"><b>${r}</b></div><div id="imp-${r==='GPP'?'g':'e'}"></div>`).join(''); ['GPP','|ER|'].forEach(r=>{ const d=IMPORTANCE.filter(x=>x.response===r).sort((a,b)=>b.pct-a.pct); const el=$('#imp-'+(r==='GPP'?'g':'e')); const mm={t:2,r:44,b:2,l:150}; const H=d.length*24+6; const c=mount(el,H,mm); const x=d3.scaleLinear().domain([0,d3.max(d,q=>q.pct)]).range([0,c.w]); const y=d3.scaleBand().domain(d.map(q=>q.driver)).range([0,c.h]).padding(.25);
+      c.g.selectAll('rect').data(d).join('rect').attr('y',q=>y(q.driver)).attr('height',y.bandwidth()).attr('width',q=>x(q.pct)).attr('fill',r==='GPP'?C.gpp:C.er).attr('rx',3); c.g.selectAll('text.l').data(d).join('text').attr('x',-8).attr('y',q=>y(q.driver)+y.bandwidth()/2+4).attr('text-anchor','end').attr('font-size',12).attr('fill',C.ink).text(q=>q.driver); c.g.selectAll('text.v').data(d).join('text').attr('x',q=>x(q.pct)+6).attr('y',q=>y(q.driver)+y.bandwidth()/2+4).attr('font-size',12).attr('fill',C.muted).text(q=>f0(q.pct)+'%'); }); }
+}
+
+/* ---------- data quality ---------- */
+function vQuality(v){
+  const sensorDays=new Map(); d3.rollup(COVERAGE,a=>d3.sum(a,x=>x.days),x=>x.site).forEach((n,k)=>sensorDays.set(k,n));
+  const rows=SITES.map(s=>{ const all=BY_SITE.get(s.id)||[]; const pass=all.filter(d=>d.pass).length; return {s,n:all.length,pass,sensor:sensorDays.get(s.id)}; });
+  const confCol=c=>/direct/i.test(c)?C.ok:/proxy/i.test(c)?C.warn:C.bad;
+  v.innerHTML=`<div class="panel"><h4>Estimates and K600 assumptions by site</h4><div class="sub">K600 (gas exchange) is not measured; each site uses a prior from reach hydraulics and flow, or a documented assumption. Estimates at sites with high K600 or low flow confidence deserve extra scrutiny.</div><div class="scroll-x"><table><thead><tr><th>Site</th><th class="r">Sensor days</th><th class="r">Estimated days</th><th class="r">Passed checks</th><th class="r">K600 prior (1/d)</th><th class="r">Prior spread (log sd)</th><th>Flow basis</th><th>Description</th></tr></thead><tbody>${rows.map(({s,n,pass,sensor})=>`<tr><td><i class="dot" style="background:${s.color};width:9px;height:9px;margin-right:7px"></i><b>${esc(s.label)}</b></td><td class="r num">${sensor?f0(sensor):'–'}</td><td class="r num">${n?f0(n):'–'}</td><td class="r num">${n?f0(pass/n*100)+'%':'–'}</td><td class="r num">${isNum(s.K600)?f0(s.K600):'–'}</td><td class="r num">${isNum(s.sdlog)?f2(s.sdlog):'–'}</td><td><span class="pill" style="background:${confCol(s.conf)}">${esc(s.conf)}</span></td><td>${esc(s.desc)}</td></tr>`).join('')}</tbody></table></div></div>
+  <div class="panel"><h4>Estimated K600 through time</h4><div class="sub">Dots are daily posterior K600. With a tight prior these stay close to each site's prior; wide scatter means the data are pulling the estimate.</div><div class="legend">${dataSites().map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('')}</div><div id="kq"></div></div>`;
+  const sites=dataSites(); const all=sites.flatMap(s=>srows(s.id)); if(all.some(d=>isNum(d.K600))){ lineChart($('#kq'),{h:300,xDomain:xdom(all),yLabel:'K600 (1/d)',series:sites.map(s=>({name:s.label,color:s.color,mode:'dots',r:2,opacity:.5,data:srows(s.id).map(d=>({x:new Date(d.t),y:d.K600})).filter(d=>isNum(d.y)),fmt:f1}))}); } else nodata($('#kq'),'No K600 estimates loaded.');
+}
+
+/* ================= site visit tracker ================= */
+const VTYPES=['Sonde deployed','Sonde pulled','Data download','Calibration','Cleaning','Battery or repair','Sensor replaced','Other'];
+const VKEY='poudre-site-visits-v1';
+let VST={added:[],hidden:[],interval:21,shared:[]};
+try{ Object.assign(VST,JSON.parse(localStorage.getItem(VKEY)||'{}')); }catch(e){}
+const VSEED=rowsOf(RAW.visits).map((v,i)=>({id:v.id||('seed-'+i),site:v.site,date:String(v.date||'').slice(0,10),type:Array.isArray(v.type)?v.type:String(v.type||'').split(/;\s*/).filter(Boolean),tech:v.tech||'',notes:v.notes||'',issue:(v.issue===true||v.issue==='TRUE'||v.issue==='true'||v.issue===1),src:'file'}));
+function vPersist(){ try{ localStorage.setItem(VKEY,JSON.stringify({added:VST.added,hidden:VST.hidden,interval:VST.interval})); }catch(e){} }
+function VISITS_LIST(){ return VSEED.filter(v=>!VST.hidden.includes(v.id)).concat(VST.shared||[]).concat(VST.added).filter(v=>SITE[v.site]&&v.date).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0); }
+const todayISO=()=>{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+const daysBetween=(a,b)=>Math.round((Date.parse(b+'T12:00:00Z')-Date.parse(a+'T12:00:00Z'))/864e5);
+const V={site:'all',type:'all',msg:'',sync:'local',host:null};
+const vDocId=id=>String(id).replace(/[^A-Za-z0-9_.~:@+-]/g,'_').slice(0,120);
+async function vDbWrite(rec){ if(!VDB) return false; try{ await VDB.collection('visits').doc(vDocId(rec.id)).set({site:rec.site,date:rec.date,type:rec.type,tech:rec.tech,notes:rec.notes,issue:!!rec.issue,created:Date.now()}); return true; }catch(e){ return false; } }
+async function vDbDelete(id){ if(!VDB) return false; try{ await VDB.collection('visits').doc(vDocId(id)).delete(); return true; }catch(e){ return false; } }
+(async()=>{ try{ if(!window.claude||!claude.use) return; VDB=await claude.use('db'); if(!VDB) return; const to=setTimeout(()=>{ if(V.sync!=='shared'){ V.sync='slow'; vRefresh(); } },10000);
+  VDB.collection('visits').onSnapshot(snap=>{ clearTimeout(to); VST.shared=snap.docs.map(d=>{ const x=d.data()||{}; return {id:d.id,site:x.site,date:String(x.date||'').slice(0,10),type:Array.isArray(x.type)?x.type:[],tech:x.tech||'',notes:x.notes||'',issue:!!x.issue,src:'shared'}; }); V.sync='shared'; vRefresh(); },()=>{ clearTimeout(to); V.sync='local'; vRefresh(); }); }catch(e){} })();
+function vRefresh(){ try{ if(V.host&&V.host.isConnected&&!$('#page-research').hidden&&R.tab==='visits') vVisits(V.host); else if(!$('#page-research').hidden) renderR(); }catch(e){} }
+
+function siteStatus(s,list){
+  const mine=list.filter(v=>v.site===s.id); if(!mine.length) return {cls:'none',label:'No visits logged',days:null,last:null};
+  const last=mine[0]; const since=daysBetween(last.date,todayISO());
+  if(last.type.includes('Sonde pulled')) return {cls:'none',label:'Out of the river',days:since,last};
+  const cls=since<=VST.interval?'':since<=VST.interval*1.5?'warn':'bad';
+  return {cls,label:cls===''?'On schedule':cls==='warn'?'Visit soon':'Overdue',days:since,last};
+}
+function vVisits(v){
+  V.host=v; const list=VISITS_LIST(); const fsite=V.site, ftype=V.type;
+  const shown=list.filter(x=>(fsite==='all'||x.site===fsite)&&(ftype==='all'||x.type.includes(ftype)));
+  v.innerHTML=`<div class="ctl"><label>Flag a site as overdue after <input type="number" id="v-int" min="1" max="120" value="${VST.interval}" style="width:64px;border:1px solid var(--line);border-radius:8px;padding:5px 8px"> days</label><span class="note" style="margin:0">Days are counted from the most recent logged visit to today.</span></div>
+  <div class="visit-cards" id="v-cards">${SITES.map(s=>{ const st=siteStatus(s,list); return `<div class="vc ${st.cls}" role="button" tabindex="0" data-s="${s.id}"><b>${esc(s.label)}</b><small>${esc(st.label)}</small><div class="d num">${st.days==null?'–':st.days+' d'}</div><small>${st.last?'Last: '+esc(st.last.type.join(', ')||'visit')+', '+st.last.date:'Click to log the first visit'}</small></div>`; }).join('')}</div>
+  <div class="panel"><h4>Log a visit</h4><div class="form" id="v-form" style="margin-top:12px">
+    <label>Site<select id="f-site">${SITES.map(s=>`<option value="${s.id}" ${s.id===(V.site!=='all'?V.site:R.focus)?'selected':''}>${esc(s.label)} · ${esc(s.desc.slice(0,40))}</option>`).join('')}</select></label>
+    <label>Date<input type="date" id="f-date" value="${todayISO()}"></label>
+    <label>Who went<input type="text" id="f-tech" placeholder="Initials or name"></label>
+    <div class="full"><label>What was done</label><div class="types">${VTYPES.map(t=>`<label><input type="checkbox" name="f-type" value="${t}">${t}</label>`).join('')}</div></div>
+    <div class="full"><label>Notes<textarea id="f-notes" rows="3" placeholder="Condition of the sonde, calibration results, anything that could affect the data"></textarea></label></div>
+    <div class="full"><label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--ink)"><input type="checkbox" id="f-issue" style="width:auto;margin:0"> A problem was found that may affect the data (shown in red on the time series)</label></div>
+    <div><button class="btn pri" id="f-save">Save visit</button> <span id="f-msg" class="note" style="display:inline" role="status">${esc(V.msg)}</span></div></div></div>
+  <div class="panel"><h4>Visit log</h4><div class="ctl" style="margin-top:8px"><label>Site <select id="l-site"><option value="all">All sites</option>${SITES.map(s=>`<option value="${s.id}" ${fsite===s.id?'selected':''}>${esc(s.label)}</option>`).join('')}</select></label>
+    <label>Type <select id="l-type"><option value="all">All types</option>${VTYPES.map(t=>`<option ${ftype===t?'selected':''}>${t}</option>`).join('')}</select></label>
+    <button class="btn" id="v-export">Export visits (CSV)</button><label class="btn" style="cursor:pointer">Import visits<input type="file" id="v-import" accept=".csv" class="sr"></label></div>
+    <div class="scroll-x">${shown.length?`<table><thead><tr><th>Date</th><th>Site</th><th>What was done</th><th>Who</th><th>Notes</th><th></th></tr></thead><tbody>${shown.slice(0,60).map(x=>`<tr><td class="num">${x.date}</td><td><b>${esc(SITE[x.site].label)}</b></td><td>${x.type.map(t=>`<span class="pill" style="background:${t==='Sonde pulled'?'#6C757D':t==='Sonde deployed'?C.ok:'#0D5C6E'}">${esc(t)}</span>`).join(' ')}${x.issue?' <span class="pill" style="background:'+C.bad+'">Problem</span>':''}</td><td>${esc(x.tech)}</td><td style="white-space:normal;min-width:240px">${esc(x.notes)}</td><td><button class="btn warn" data-del="${esc(x.id)}" aria-label="Delete visit">Delete</button></td></tr>`).join('')}</tbody></table>${shown.length>60?`<div class="note">Showing the 60 most recent of ${shown.length}. Filter by site to see more.</div>`:''}`:`<div class="empty">No visits match. Log one above.</div>`}</div>
+    <div class="note">${V.sync==='shared'?'Visits are saved to a shared log: everyone with access to this page sees new visits straight away.':V.sync==='slow'?'The shared log could not be reached yet, so visits are saved in this browser for now.':'Visits are saved in this browser on this computer. To share them, choose Export, save the file as <code>site_visits.csv</code> in <code>dashboard_data</code>, and re-run the R workflow.'}</div></div>`;
+  $('#v-int').onchange=e=>{ VST.interval=Math.max(1,+e.target.value||21); vPersist(); vVisits(v); };
+  $$('.vc',v).forEach(c=>{ const go=()=>{V.site=c.dataset.s;vVisits(v);$('#f-site').value=c.dataset.s;$('#v-form').scrollIntoView({behavior:'smooth',block:'center'});}; c.onclick=go; c.onkeydown=e=>{if(e.key==='Enter')go();}; });
+  $('#l-site').onchange=e=>{V.site=e.target.value;vVisits(v);}; $('#l-type').onchange=e=>{V.type=e.target.value;vVisits(v);};
+  $('#f-save').onclick=async()=>{ const types=$$('[name=f-type]:checked',v).map(c=>c.value); const date=$('#f-date').value, site=$('#f-site').value;
+    if(!date){ $('#f-msg').textContent='Choose the date of the visit.'; return; } if(!types.length){ $('#f-msg').textContent='Tick at least one thing that was done.'; return; }
+    const rec={id:'v-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),site,date,type:types,tech:$('#f-tech').value.trim(),notes:$('#f-notes').value.trim(),issue:$('#f-issue').checked,src:'local'};
+    if(V.sync==='shared'&&await vDbWrite(rec)){ V.msg='Saved and shared with everyone who opens this page.'; } else { VST.added.push(rec); vPersist(); V.msg=VDB?'Could not reach the shared log (you may have view-only access), so this visit is saved in this browser only.':'Saved in this browser. Export to share with your team.'; } vVisits(v); };
+  $$('[data-del]',v).forEach(b=>b.onclick=async()=>{ const id=b.dataset.del; const i=VST.added.findIndex(x=>x.id===id); if(i>=0){ VST.added.splice(i,1); vPersist(); } else if((VST.shared||[]).some(x=>x.id===id)){ if(!(await vDbDelete(id))){ V.msg='Could not delete from the shared log.'; } } else { VST.hidden.push(id); vPersist(); } vVisits(v); });
+  $('#v-export').onclick=()=>dl('site_visits.csv',csvOf(list.map(x=>({id:x.id,site:x.site,date:x.date,type:x.type.join('; '),tech:x.tech,notes:x.notes,issue:x.issue})),['id','site','date','type','tech','notes','issue']));
+  $('#v-import').onchange=e=>{ const f=e.target.files[0]; if(!f) return; f.text().then(t=>{ const rows=parseCSV(t); const have=new Set(VISITS_LIST().map(x=>x.id)); let n=0; rows.forEach(r=>{ if(!r.site||!r.date||!SITE[r.site]) return; const id=r.id||('imp-'+r.site+'-'+r.date+'-'+(r.type||'')); if(have.has(id)) return; VST.added.push({id,site:r.site,date:r.date.slice(0,10),type:String(r.type||'').split(/;\s*/).filter(Boolean),tech:r.tech||'',notes:r.notes||'',issue:/^(true|1|yes)$/i.test(r.issue||''),src:'local'}); n++; }); vPersist(); V.msg=n+' visits imported.'; vVisits(v); }); };
+}
+function parseCSV(text){ const rows=[]; let row=[],cur='',q=false; for(let i=0;i<text.length;i++){ const c=text[i]; if(q){ if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; } else if(c==='"') q=true; else if(c===','){row.push(cur);cur='';} else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur);cur=''; if(row.length>1||row[0]!=='')rows.push(row); row=[]; } else cur+=c; } if(cur!==''||row.length){row.push(cur);rows.push(row);} const h=(rows.shift()||[]).map(x=>x.trim()); return rows.map(r=>Object.fromEntries(h.map((k,i)=>[k,r[i]]))); }
+
+/* ================= start-up and routing ================= */
+let rBuilt=false;
+function showPage(p,sub){
+  const pub=p==='public'; $('#page-public').hidden=!pub; $('#page-research').hidden=pub;
+  $('#tab-public').setAttribute('aria-selected',pub); $('#tab-research').setAttribute('aria-selected',!pub); untip();
+  if(pub){ buildRibbon(); updateRibbon(); if(P.site) renderSite(); }
+  else { if(!rBuilt){ buildRail(); buildTabs(); rBuilt=true; } if(sub&&RTABS.some(t=>t[0]===sub)) R.tab=sub; $$('#rtabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===R.tab)); renderR(); }
+  window.scrollTo(0,0);
+}
+function route(){ const h=location.hash.replace('#',''); if(h.startsWith('research')) showPage('research',h.split('/')[1]); else showPage('public'); }
+$('#tab-public').onclick=()=>{ history.replaceState(null,'','#'); showPage('public'); };
+$('#tab-research').onclick=()=>{ history.replaceState(null,'','#research'); showPage('research'); };
+window.addEventListener('hashchange',route);
+if(DEMO) $('#demo-banner').hidden=false;
+document.title='Cache la Poudre stream metabolism';
+initHero(); initThree(); initChips(); initFooter();
+if(location.hash.startsWith('#research')) route();
+let rz; window.addEventListener('resize',()=>{ clearTimeout(rz); rz=setTimeout(()=>{ if(!$('#page-public').hidden){ buildRibbon(); updateRibbon(); if(P.site) renderSite(); } else renderR(); },160); });
+
+
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# K600 literature used for the Poudre sonde network
+
+| Paper | What it provides here |
+|---|---|
+| Raymond, Zappa, Butman, Bott, Potter, Mulholland, Laursen, McDowell, Newbold (2012). Scaling the gas transfer velocity and hydraulic geometry in streams and small rivers. *Limnol. Oceanogr.: Fluids Environ.* 2:41-53. doi:10.1215/21573689-1597669 | Meta-analysis of 563 gas-tracer experiments. k600 scales with slope x velocity. Equations used (k600 in m/d, V m/s, S unitless, D m, Q m3/s): Eq. 4 `5037 (VS)^0.89 D^0.54` (primary); Eq. 7 `4725 (VS)^0.86 Q^-0.14 D^0.66` (sensitivity). Also hydraulic geometry of width, depth and velocity vs discharge. |
+| Aho, Cawley, Hensley, Hall, Dodds et al. (2024). Gas exchange velocities, gas exchange rates, and hydraulic geometries for streams and rivers from NEON reaeration data. *Earth Syst. Sci. Data* 16:5563. | Precedent for the approach: Raymond Eq. 4 used to set priors for site-level gas exchange. |
+| Appling, Hall, Yackulic, Arroita (2018). Overcoming equifinality: leveraging long time series for stream metabolism estimation. *JGR Biogeosciences* 123:624-645. doi:10.1002/2017JG004140 | Why K600 must be constrained (equifinality with ER) and the Bayesian options in streamMetabolizer (used in the main script). |
+| Hall & Ulseth (2020). Gas exchange in streams and rivers. *WIREs Water* 7:e1391 | Review and decision tree for choosing how to estimate k600 for a reach; supports hydraulic-model priors when tracer data are unavailable. |
+| Ulseth, Hall, Boix Canadell, Madinger, Niayifar, Battin (2019). Distinct air-water gas exchange regimes in low- and high-energy streams. *Nature Geoscience* 12:259-263. doi:10.1038/s41561-019-0324-8 | Two scaling regimes. Bubble-mediated exchange in steep, high-energy streams gives some of the highest reported k600; lowland equations underpredict mountain streams (EPFL's summary says by roughly a factor of 100 on average). Relevant to the upper Poudre and tributary sites. |
+| Aho et al. (2025). Gas transfer velocity (k600) increases with discharge in steep streams but not in low-slope streams. *Limnol. Oceanogr. Lett.* doi:10.1002/lol2.70003 | k600 rises with Q in steep streams and is flat in low-slope ones, so a single K600 per site is a worse assumption at the steep sites. |
+
+Data sources: USGS Water Data APIs via `dataRetrieval::read_waterdata_daily()` (replaces `readNWISdv`; NWIS web services are being shut down) and Colorado DWR/CDSS REST services (`api/v2/telemetrystations`, `surfacewater`) via `cdssr`.
